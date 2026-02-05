@@ -196,7 +196,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
         // Get cover
 
         val coverResponse = client.newCall(
-            createPost(driveDocument, folderId, nextPageToken, searchReqWithType(folderId, "cover", IMAGE_MIMETYPE)),
+            createPost(driveDocument, folderId, "", searchReqWithType(folderId, "cover", IMAGE_MIMETYPE)),
         ).execute().parseAs<PostResponse> { JSON_REGEX.find(it)!!.groupValues[1] }
 
         coverResponse.items?.firstOrNull()?.let {
@@ -206,7 +206,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
         // Get details
 
         val detailsResponse = client.newCall(
-            createPost(driveDocument, folderId, nextPageToken, searchReqWithType(folderId, "details.json", "")),
+            createPost(driveDocument, folderId, "", searchReqWithType(folderId, "details.json", "")),
         ).execute().parseAs<PostResponse> { JSON_REGEX.find(it)!!.groupValues[1] }
 
         detailsResponse.items?.firstOrNull()?.let {
