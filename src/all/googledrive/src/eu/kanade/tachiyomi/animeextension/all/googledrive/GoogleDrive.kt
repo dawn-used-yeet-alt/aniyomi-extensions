@@ -319,13 +319,13 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                 }
 
                 if (parsed.items == null) throw Exception("Failed to load items, please log in through webview")
-                
+
                 parsed.items.forEach { it ->
                     val isVideo = it.mimeType.startsWith("video")
                     val isFolder = it.mimeType.endsWith(".folder")
-                    val isJunk = it.mimeType.startsWith("image/") || 
-                                 it.title.equals("details.json", ignoreCase = true) || 
-                                 it.mimeType.contains("json")
+                    val isJunk = it.mimeType.startsWith("image/") ||
+                        it.title.equals("details.json", ignoreCase = true) ||
+                        it.mimeType.contains("json")
 
                     if (isJunk) {
                         return@forEach
@@ -359,7 +359,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                         )
                         videoCounter++
                     }
-                    
+
                     if (isFolder) {
                         traverseFolder(
                             "https://drive.google.com/drive/folders/${it.id}",
