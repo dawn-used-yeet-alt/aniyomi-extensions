@@ -4,13 +4,6 @@ on:
   push:
     branches:
       - master
-    paths:
-      - '**'
-      - '!**.md'
-      - '!.github/**'
-      - '.github/scripts/**'
-      - '.github/workflows/build_push.yml'
-  # Manual trigger
   workflow_dispatch:
 
 concurrency:
@@ -22,195 +15,49 @@ permissions:
 
 env:
   CI_CHUNK_SIZE: 65
-  IS_PR_CHECK: false
 
 jobs:
-  prepare:
-    name: Prepare job
+  build:
+    name: Force Build Google Drive
     runs-on: 'ubuntu-24.04'
-    outputs:
-      latestCommitMessage: ${{ steps.set-env.outputs.LATEST_COMMIT_MESSAGE }}
-      matrix: ${{ steps.generate-matrices.outputs.matrix }}
-      delete: ${{ steps.generate-matrices.outputs.delete }}
     steps:
-      - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Checkout branch
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set env
-        id: set-env
-        run: |
-          echo "LATEST_COMMIT_MESSAGE<<{delimiter}
-          $(git log -1 --pretty=%B)
-
-          Built on commit: $(git log -1 --pretty=%H)
-          {delimiter}" >> $GITHUB_OUTPUT
-
-      - name: Find lib changes
-        id: modified-libs
-        uses: tj-actions/changed-files@e0021407031f5be11a464abee9a0776171c79891 # v47.0.1
-        with:
-          files: lib/
-          files_ignore: lib/**.md
-          files_separator: " "
-          safe_output: false
-
-      - name: Bump extensions that uses a modified lib
-        if: steps.modified-libs.outputs.any_changed == 'true'
-        env:
-          COMMIT_MESSAGE: ${{ steps.set-env.outputs.LATEST_COMMIT_MESSAGE }}
-        run: |
-          latest_commit_author=$(git log -1 --pretty=%an)
-          git config --local user.name "github-actions[bot]"
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          chmod +x ./.github/scripts/bump-versions.py
-          ./.github/scripts/bump-versions.py "$COMMIT_MESSAGE" ${{ steps.modified-libs.outputs.all_changed_files }}
-          git push
 
       - name: Set up Java
-        uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
+        uses: actions/setup-java@v4
         with:
           java-version: 17
           distribution: temurin
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@4d9f0ba0025fe599b4ebab900eb7f3a1d93ef4c2 # v5.0.0
+        uses: gradle/actions/setup-gradle@v3
         with:
-          cache-read-only: true
+          cache-read-only: false
 
-      - name: Get last successful CI commit
-        id: last_successful_ci_commit
-        uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4.4.0
-        with:
-          main-branch-name: ${{ github.ref_name }}
-
-      - id: generate-matrices
-        name: Create output matrices
-        run: |
-          python ./.github/scripts/generate-build-matrices.py ${{ steps.last_successful_ci_commit.outputs.base }} Release
-
-  build:
-    name: Build extensions (${{ matrix.chunk.number }})
-    needs: prepare
-    runs-on: 'ubuntu-24.04'
-    if: ${{ toJson(fromJson(needs.prepare.outputs.matrix).chunk) != '[]' }}
-    strategy:
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    steps:
-      - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          ref: ${{ github.ref_name }}
-
-      - name: Set up Java
-        uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
-        with:
-          java-version: 17
-          distribution: temurin
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@4d9f0ba0025fe599b4ebab900eb7f3a1d93ef4c2 # v5.0.0
-        with:
-          cache-read-only: ${{ matrix.chunk.number > 1 }}
-
-      # --- MODIFIED: Generate a dummy keystore on the fly ---
+      # 1. Generate Dummy Keystore (ताकि साइनिंग एरर न आए)
       - name: Generate Debug Keystore
         run: |
           keytool -genkey -v -keystore signingkey.jks -storepass 123456 -alias dummy -keypass 123456 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Debug,O=Debug,C=US"
 
-      # --- MODIFIED: Use dummy credentials for build ---
-      - name: Build extensions (${{ matrix.chunk.number }})
+      # 2. Force Build ONLY Google Drive
+      - name: Build Google Drive Extension
         env:
           ALIAS: dummy
           KEY_STORE_PASSWORD: 123456
           KEY_PASSWORD: 123456
-          MEGACLOUD_API: ${{ secrets.MEGACLOUD_API }}
-          KISSKH_API: ${{ secrets.KISSKH_API }}
-          KISSKH_SUB_API: ${{ secrets.KISSKH_SUB_API }}
-          KAISVA: ${{ secrets.KAISVA }}
-          TMDB_API: ${{ secrets.TMDB_API }}
         run: |
-          ./gradlew $(echo '${{ toJson(matrix.chunk.modules) }}' | jq -r 'join(" ")')
+          ./gradlew :src:all:googledrive:assembleRelease
 
-      - name: Upload APKs (${{ matrix.chunk.number }})
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        # Removing the repository check so it uploads artifacts even on your fork
-        # if: github.repository == 'yuzono/aniyomi-extensions' 
+      # 3. Upload the APK
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          name: "individual-apks-${{ matrix.chunk.number }}"
+          name: "google-drive-extension"
           path: "**/*.apk"
           retention-days: 1
 
-      - name: Clean up CI files
+      - name: Clean up
         run: rm signingkey.jks
-
-  publish:
-    name: Publish extension repo
-    needs: [prepare, build]
-    if: github.repository == 'yuzono/aniyomi-extensions'
-    runs-on: 'ubuntu-24.04'
-    steps:
-      - name: Download APK artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          path: ~/apk-artifacts
-
-      - name: Set up JDK
-        uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e # v5.1.0
-        with:
-          java-version: 17
-          distribution: temurin
-
-      - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          ref: ${{ github.ref_name }}
-          path: ${{ github.ref_name }}
-
-      - name: Create repo artifacts
-        run: |
-          cd ${{ github.ref_name }}
-          python ./.github/scripts/move-built-apks.py
-          INSPECTOR_LINK="$(curl -s "https://api.github.com/repos/komikku-app/aniyomi-extensions-inspector/releases/latest" | jq -r '.assets[0].browser_download_url')"
-          curl -L "$INSPECTOR_LINK" -o ./Inspector.jar
-          java -jar ./Inspector.jar "repo/apk" "output.json" "tmp"
-          python ./.github/scripts/create-repo.py
-
-      - name: Checkout repo branch
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: yuzono/aniyomi-repo
-          token: ${{ secrets.BOT_PAT }}
-          ref: repo
-          path: repo
-
-      - name: Merge repo
-        run: |
-          cd repo
-          python ../${{ github.ref_name }}/.github/scripts/merge-repo.py '${{ needs.prepare.outputs.delete }}' '${{ github.ref_name }}/repo'
-
-      - name: Deploy repo
-        uses: EndBug/add-and-commit@a94899bca583c204427a224a7af87c02f9b325d5 # v9.1.4
-        with:
-          message: "${{ needs.prepare.outputs.latestCommitMessage }}"
-          cwd: "./repo"
-
-      - name: Sync repo
-        env:
-          COMMIT_MESSAGE: ${{ needs.prepare.outputs.latestCommitMessage }}
-        run: |
-          cd repo
-          git config user.name "Yūzōnō"
-          git config user.email "yuzono@users.noreply.github.com"
-          git remote set-url origin https://github.com/yuzono/anime-repo.git
-          git fetch origin
-          git reset origin/repo
-          git add -A
-          git commit --amend -m "$COMMIT_MESSAGE" --no-sign --allow-empty || echo "No changes to commit"
-          git push origin HEAD:repo --force
-
-      - name: Purge cached index on jsDelivr
-        run: |
-          curl https://purge.jsdelivr.net/gh/yuzono/anime-repo@repo/index.min.json
