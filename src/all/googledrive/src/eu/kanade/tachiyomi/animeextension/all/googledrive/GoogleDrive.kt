@@ -183,10 +183,6 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
 
         if (parsed.type == "single") return anime
 
-        // Details fetch karne se pehle check karo agar thumbnail pehle hi set hai (parsePage se)
-        // toh usey override na karein unless zaroori ho. 
-        // Lekin 'details.json' ke liye abhi bhi request karni padegi.
-        
         val match = DRIVE_FOLDER_REGEX.matchEntire(parsed.url)
         val folderId = match?.groups?.get("id")?.value ?: return anime
 
@@ -196,7 +192,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
             null
         } ?: return anime
 
-        // Agar thumbnail khali hai toh yahan try karo (fallback)
+        // Fallback: If thumbnail is missing, try to find 'cover' image
         if (anime.thumbnail_url.isNullOrEmpty()) {
             val coverQuery = "'$folderId' in parents and title contains 'cover' and mimeType contains 'image/' and trashed = false"
             val coverResponse = client.newCall(
@@ -518,29 +514,26 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                 )
             }
             if (it.mimeType.endsWith(".folder")) {
-                // MODIFICATION START: Cover search logic added here
                 var coverUrl = ""
                 try {
-                    // Search for 'cover' inside this specific folder
                     val subFolderId = it.id
                     val coverQuery = "'$subFolderId' in parents and title contains 'cover' and mimeType contains 'image/' and trashed = false"
-                    
+
                     val coverRequest = createPost(driveDocument, subFolderId, null) { _, _, _ ->
                         val q = URLEncoder.encode(coverQuery, "UTF-8")
                         "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
                     }
-                    
+
                     val coverResponse = client.newCall(coverRequest).execute().parseAs<PostResponse> { text ->
                         JSON_REGEX.find(text)!!.groupValues[1]
                     }
-                    
+
                     coverResponse.items?.firstOrNull()?.let { coverItem ->
                         coverUrl = "https://drive.google.com/uc?id=${coverItem.id}"
                     }
                 } catch (e: Exception) {
                     // Ignore errors, just proceed without cover
                 }
-                // MODIFICATION END
 
                 animeList.add(
                     SAnime.create().apply {
@@ -549,7 +542,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                             "https://drive.google.com/drive/folders/${it.id}$recurDepth",
                             "multi",
                         ).toJsonString()
-                        thumbnail_url = coverUrl // Set the found cover URL
+                        thumbnail_url = coverUrl
                     },
                 )
             }
