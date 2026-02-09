@@ -23,6 +23,11 @@ import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import eu.kanade.tachiyomi.util.parseAs
 import extensions.utils.getPreferencesLazy
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -457,7 +462,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
         return POST(postUrl, body = body, headers = postHeaders)
     }
 
-    private fun parsePage(
+    private suspend fun parsePage(
         request: Request,
         page: Int,
         genMultiFormReq: ((String, String, String) -> String)? = null,
@@ -469,7 +474,9 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
         val folderId = DRIVE_FOLDER_REGEX.matchEntire(request.url.toString())!!.groups["id"]!!.value
 
         val driveDocument = try {
-            client.newCall(request).execute().asJsoup()
+            withContext(Dispatchers.IO) {
+                client.newCall(request).execute().asJsoup()
+            }
         } catch (a: ProtocolException) {
             throw Exception("Unable to get items, check webview")
         }
@@ -489,60 +496,77 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                 genMultiFormReq,
             )
         }
-        val response = client.newCall(post).execute()
+        val response = withContext(Dispatchers.IO) {
+            client.newCall(post).execute()
+        }
 
         val parsed = response.parseAs<PostResponse> {
             JSON_REGEX.find(it)!!.groupValues[1]
         }
 
         if (parsed.items == null) throw Exception("Failed to load items, please log in through webview")
-        parsed.items.forEachIndexed { index, it ->
-            if (it.mimeType.startsWith("video")) {
+
+        // Separate videos and folders for processing
+        val videos = parsed.items.filter { it.mimeType.startsWith("video") }
+        val folders = parsed.items.filter { it.mimeType.endsWith(".folder") }
+
+        // Add videos immediately (no cover lookup needed)
+        videos.forEach { item ->
+            animeList.add(
+                SAnime.create().apply {
+                    title = if (preferences.trimAnimeInfo) item.title.trimInfo() else item.title
+                    url = LinkData(
+                        "https://drive.google.com/uc?id=${item.id}",
+                        "single",
+                        LinkDataInfo(
+                            item.title,
+                            item.fileSize?.toLongOrNull()?.let { formatBytes(it) } ?: "",
+                        ),
+                    ).toJsonString()
+                    thumbnail_url = ""
+                },
+            )
+        }
+
+        // Fetch covers for all folders in parallel
+        if (folders.isNotEmpty()) {
+            val folderCovers = coroutineScope {
+                folders.map { folder ->
+                    async(Dispatchers.IO) {
+                        val coverUrl = try {
+                            val subFolderId = folder.id
+                            val coverQuery = "'$subFolderId' in parents and title contains 'cover' and mimeType contains 'image/' and trashed = false"
+
+                            val coverRequest = createPost(driveDocument, subFolderId, null) { _, _, _ ->
+                                val q = URLEncoder.encode(coverQuery, "UTF-8")
+                                "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
+                            }
+
+                            val coverResponse = client.newCall(coverRequest).execute().parseAs<PostResponse> { text ->
+                                JSON_REGEX.find(text)!!.groupValues[1]
+                            }
+
+                            coverResponse.items?.firstOrNull()?.let { coverItem ->
+                                "https://drive.google.com/uc?id=${coverItem.id}"
+                            } ?: ""
+                        } catch (e: Exception) {
+                            ""
+                        }
+                        folder to coverUrl
+                    }
+                }.awaitAll()
+            }.toMap()
+
+            // Add folders with their covers
+            folders.forEach { folder ->
                 animeList.add(
                     SAnime.create().apply {
-                        title = if (preferences.trimAnimeInfo) it.title.trimInfo() else it.title
+                        title = if (preferences.trimAnimeInfo) folder.title.trimInfo() else folder.title
                         url = LinkData(
-                            "https://drive.google.com/uc?id=${it.id}",
-                            "single",
-                            LinkDataInfo(
-                                it.title,
-                                it.fileSize?.toLongOrNull()?.let { formatBytes(it) } ?: "",
-                            ),
-                        ).toJsonString()
-                        thumbnail_url = ""
-                    },
-                )
-            }
-            if (it.mimeType.endsWith(".folder")) {
-                var coverUrl = ""
-                try {
-                    val subFolderId = it.id
-                    val coverQuery = "'$subFolderId' in parents and title contains 'cover' and mimeType contains 'image/' and trashed = false"
-
-                    val coverRequest = createPost(driveDocument, subFolderId, null) { _, _, _ ->
-                        val q = URLEncoder.encode(coverQuery, "UTF-8")
-                        "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
-                    }
-
-                    val coverResponse = client.newCall(coverRequest).execute().parseAs<PostResponse> { text ->
-                        JSON_REGEX.find(text)!!.groupValues[1]
-                    }
-
-                    coverResponse.items?.firstOrNull()?.let { coverItem ->
-                        coverUrl = "https://drive.google.com/uc?id=${coverItem.id}"
-                    }
-                } catch (e: Exception) {
-                    // Ignore errors, just proceed without cover
-                }
-
-                animeList.add(
-                    SAnime.create().apply {
-                        title = if (preferences.trimAnimeInfo) it.title.trimInfo() else it.title
-                        url = LinkData(
-                            "https://drive.google.com/drive/folders/${it.id}$recurDepth",
+                            "https://drive.google.com/drive/folders/${folder.id}$recurDepth",
                             "multi",
                         ).toJsonString()
-                        thumbnail_url = coverUrl
+                        thumbnail_url = folderCovers[folder] ?: ""
                     },
                 )
             }
