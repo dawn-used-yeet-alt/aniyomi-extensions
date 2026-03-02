@@ -6,13 +6,8 @@ fun searchReq(parentId: String, query: String): (String, String, String) -> Stri
 
 fun searchReqWithType(parentId: String, query: String, type: String): (String, String, String) -> String {
     return { _: String, nextPageToken: String, key: String ->
-        val titleQuery = query
-            .split("%20", "+", " ")
-            .filter { it.isNotBlank() }
-            .joinToString("%20and%20") { "title%20contains%20'$it'" }
-
-        val qParam = if (titleQuery.isNotEmpty()) {
-            "$titleQuery$type%20and%20trashed%20%3D%20false%20and%20'$parentId'%20in%20ancestors"
+        val qParam = if (query.isNotEmpty()) {
+            "title%20contains%20'$query'$type%20and%20trashed%20%3D%20false%20and%20'$parentId'%20in%20ancestors"
         } else {
             "trashed%20%3D%20false%20and%20'$parentId'%20in%20ancestors$type"
         }

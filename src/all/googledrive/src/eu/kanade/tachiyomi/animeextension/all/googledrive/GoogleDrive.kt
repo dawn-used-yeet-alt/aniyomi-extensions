@@ -117,10 +117,29 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                 parsePage(req, page)
             } else {
                 val parentId = req.url.pathSegments.last()
-                val cleanQuery = URLEncoder.encode(query, "UTF-8")
-                val genMultiFormReq = searchReq(parentId, cleanQuery)
+                val genMultiFormReq = searchReq(parentId, "")
 
-                parsePage(req, page, genMultiFormReq)
+                var currentPage = page
+                val matchedAnime = mutableListOf<SAnime>()
+                var hasNext = true
+
+                val userQueryCleaned = query.replace("\\s+".toRegex(), "").lowercase()
+                val queryWords = query.lowercase().split("\\s+".toRegex()).filter { it.isNotBlank() }
+
+                while (matchedAnime.size < 20 && hasNext) {
+                    val pageResult = parsePage(req, currentPage, genMultiFormReq, filterFn = { item ->
+                        val title = if (preferences.trimAnimeInfo) item.title.trimInfo() else item.title
+                        val cleanTitle = title.replace("\\s+".toRegex(), "").lowercase()
+                        val lowerTitle = item.title.lowercase()
+
+                        cleanTitle.contains(userQueryCleaned) || (queryWords.isNotEmpty() && queryWords.all { word -> lowerTitle.contains(word) })
+                    })
+                    matchedAnime.addAll(pageResult.animes)
+                    hasNext = pageResult.hasNextPage
+                    if (hasNext) currentPage++
+                }
+
+                AnimesPage(matchedAnime, hasNext)
             }
         } else {
             addSinglePage(urlFilter.state)
@@ -466,6 +485,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
         request: Request,
         page: Int,
         genMultiFormReq: ((String, String, String) -> String)? = null,
+        filterFn: ((PostResponse.ResponseItem) -> Boolean)? = null,
     ): AnimesPage {
         val animeList = mutableListOf<SAnime>()
 
@@ -508,7 +528,11 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
 
         // Separate videos and folders for processing
         val videos = parsed.items.filter { it.mimeType.startsWith("video") }
-        val folders = parsed.items.filter { it.mimeType.endsWith(".folder") }
+        var folders = parsed.items.filter { it.mimeType.endsWith(".folder") }
+
+        if (filterFn != null) {
+            folders = folders.filter(filterFn)
+        }
 
         // Add videos immediately (no cover lookup needed)
         videos.forEach { item ->
