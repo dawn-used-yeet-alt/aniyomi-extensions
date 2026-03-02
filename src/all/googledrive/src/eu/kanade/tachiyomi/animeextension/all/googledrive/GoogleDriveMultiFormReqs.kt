@@ -10,7 +10,7 @@ fun searchReqWithType(parentId: String, query: String, type: String): (String, S
             .split("%20", "+", " ")
             .filter { it.isNotBlank() }
             .joinToString("%20and%20") { "title%20contains%20'$it'" }
-            
+
         val qParam = if (titleQuery.isNotEmpty()) {
             "$titleQuery$type%20and%20trashed%20%3D%20false%20and%20'$parentId'%20in%20ancestors"
         } else {
