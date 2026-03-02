@@ -30,7 +30,7 @@ class GoogleDriveExtractor(private val client: OkHttpClient, private val headers
         try {
             if (!docResp.peekBody(15).string().equals("<!DOCTYPE html>", true)) {
                 return listOf(
-                    Video(docResp.request.url.toString(), videoName, docResp.request.url.toString(), docHeaders)
+                    Video(url, videoName, url, docHeaders)
                 )
             }
 
