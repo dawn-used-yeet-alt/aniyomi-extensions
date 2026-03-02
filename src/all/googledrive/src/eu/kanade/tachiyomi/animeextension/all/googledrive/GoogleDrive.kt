@@ -31,9 +31,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
@@ -59,10 +57,6 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
     override val lang = "all"
 
     override val supportsLatest = false
-
-    override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(driveTokenRefreshInterceptor())
-        .build()
 
     private val json: Json by injectLazy()
 
@@ -634,53 +628,6 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
     }
 
     private fun isFolder(text: String) = DRIVE_FOLDER_REGEX matches text
-
-    /**
-     * Interceptor that auto-refreshes expired Google Drive streaming tokens.
-     * When ExoPlayer makes a Range request and receives HTML instead of video
-     * data (expired uuid/at tokens), this transparently re-fetches the warning
-     * page, extracts fresh tokens, and retries the request.
-     */
-    private fun driveTokenRefreshInterceptor() = Interceptor { chain ->
-        val request = chain.request()
-        val response = chain.proceed(request)
-
-        val host = request.url.host
-        val isStreamingRequest = request.header("Range") != null
-        if (!host.contains("drive.usercontent.google.com") || !isStreamingRequest) {
-            return@Interceptor response
-        }
-
-        val contentType = response.header("Content-Type") ?: ""
-        if (!contentType.contains("text/html")) {
-            return@Interceptor response
-        }
-
-        response.close()
-
-        val baseUrl = request.url.newBuilder().apply {
-            removeAllQueryParameters("confirm")
-            removeAllQueryParameters("uuid")
-            removeAllQueryParameters("at")
-        }.build()
-
-        val warningResp = chain.proceed(
-            request.newBuilder()
-                .url(baseUrl)
-                .removeHeader("Range")
-                .build(),
-        )
-        val doc = warningResp.asJsoup()
-
-        val freshUrl = baseUrl.newBuilder().apply {
-            doc.select("input[type=hidden]").forEach {
-                setQueryParameter(it.attr("name"), it.attr("value"))
-            }
-        }.build()
-        warningResp.close()
-
-        chain.proceed(request.newBuilder().url(freshUrl).build())
-    }
 
     private fun setupEditTextFolderValidator(editText: EditText) {
         editText.addTextChangedListener(
