@@ -27,27 +27,38 @@ class GoogleDriveExtractor(private val client: OkHttpClient, private val headers
             GET(url, docHeaders)
         ).execute()
 
-        if (!docResp.peekBody(15).string().equals("<!DOCTYPE html>", true)) {
-            return listOf(
-                Video(url, videoName, url, docHeaders)
-            )
-        }
-
-        val document = docResp.asJsoup()
-
-        val itemSize = document.selectFirst("span.uc-name-size")
-            ?.let { " ${it.ownText().trim()} " }
-            ?: ""
-
-        val videoUrl = url.toHttpUrl().newBuilder().apply {
-            document.select("input[type=hidden]").forEach {
-                setQueryParameter(it.attr("name"), it.attr("value"))
+        try {
+            if (!docResp.peekBody(15).string().equals("<!DOCTYPE html>", true)) {
+                return listOf(
+                    Video(docResp.request.url.toString(), videoName, docResp.request.url.toString(), docHeaders)
+                )
             }
-        }.build().toString()
 
-        return listOf(
-            Video(videoUrl, videoName + itemSize, videoUrl, docHeaders)
-        )
+            val document = docResp.asJsoup()
+
+            val itemSize = document.selectFirst("span.uc-name-size")
+                ?.let { " ${it.ownText().trim()} " }
+                ?: ""
+
+            val videoUrl = url.toHttpUrl().newBuilder().apply {
+                document.select("input[type=hidden]").forEach {
+                    setQueryParameter(it.attr("name"), it.attr("value"))
+                }
+            }.build().toString()
+
+            val finalResp = client.newCall(
+                GET(videoUrl, docHeaders)
+            ).execute()
+            
+            val finalUrl = finalResp.request.url.toString()
+            finalResp.close()
+
+            return listOf(
+                Video(finalUrl, videoName + itemSize, finalUrl, docHeaders)
+            )
+        } finally {
+            docResp.close()
+        }
     }
 
     private fun List<Cookie>.toStr(): String {
