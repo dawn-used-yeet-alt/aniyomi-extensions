@@ -646,7 +646,8 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
         val response = chain.proceed(request)
 
         val host = request.url.host
-        if (!host.contains("drive.usercontent.google.com")) {
+        val isStreamingRequest = request.header("Range") != null
+        if (!host.contains("drive.usercontent.google.com") || !isStreamingRequest) {
             return@Interceptor response
         }
 
