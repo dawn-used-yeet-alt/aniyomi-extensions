@@ -54,6 +54,8 @@ class GoogleDriveExtractor(private val client: OkHttpClient, private val headers
             val videoHeaders = headers.newBuilder()
                 .removeAll("Cookie")
                 .removeAll("Host")
+                .set("Connection", "close")
+                .set("User-Agent", "Lavf/60.3.100")
                 .build()
 
             return listOf(
