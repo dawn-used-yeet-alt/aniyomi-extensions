@@ -13,6 +13,19 @@ data class PostResponse(
         val title: String,
         val mimeType: String,
         val fileSize: String? = null,
+        val shortcutDetails: ShortcutDetails? = null,
+    ) {
+        val realId: String
+            get() = shortcutDetails?.targetId ?: id
+
+        val realMimeType: String
+            get() = shortcutDetails?.targetMimeType ?: mimeType
+    }
+
+    @Serializable
+    data class ShortcutDetails(
+        val targetId: String? = null,
+        val targetMimeType: String? = null,
     )
 }
 
