@@ -421,46 +421,102 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
             defaultGetRequest(folderIdStr, nextPageTokenStr, keyStr)
         },
     ): Request {
-        val keyScript = document.select("script").first { script ->
-            KEY_REGEX.find(script.data()) != null
-        }.data()
-        val key = KEY_REGEX.find(keyScript)?.groupValues?.get(1) ?: ""
+        try {
+            println("🚀 createPost START")
+            println("📂 folderId = $folderId")
+            println("📄 pageToken = $pageToken")
 
-        val versionScript = document.select("script").first { script ->
-            KEY_REGEX.find(script.data()) != null
-        }.data()
-        val driveVersion = VERSION_REGEX.find(versionScript)?.groupValues?.get(1) ?: ""
-        val sapisid =
-            client.cookieJar.loadForRequest("https://drive.google.com".toHttpUrl()).firstOrNull {
+            val scripts = document.select("script")
+            println("📜 total scripts found = ${scripts.size}")
+
+            scripts.take(5).forEachIndexed { i, script ->
+                println("📜 script[$i] = ${script.data().take(200)}")
+            }
+
+            val keyScript = scripts.firstOrNull { script ->
+                KEY_REGEX.find(script.data()) != null
+            }?.data()
+
+            if (keyScript == null) {
+                println("❌ KEY script NOT FOUND")
+                println("📄 HTML preview = ${document.outerHtml().take(1000)}")
+            }
+
+            val key = keyScript?.let {
+                KEY_REGEX.find(it)?.groupValues?.get(1)
+            } ?: ""
+
+            println("🔑 extracted key = $key")
+
+            val versionScript = scripts.firstOrNull { script ->
+                VERSION_REGEX.find(script.data()) != null
+            }?.data()
+
+            if (versionScript == null) {
+                println("❌ VERSION script NOT FOUND")
+            }
+
+            val driveVersion = versionScript?.let {
+                VERSION_REGEX.find(it)?.groupValues?.get(1)
+            } ?: ""
+
+            println("🧩 driveVersion = $driveVersion")
+
+            val cookies = client.cookieJar.loadForRequest("https://drive.google.com".toHttpUrl())
+            println("🍪 cookies = $cookies")
+
+            val sapisid = cookies.firstOrNull {
                 it.name == "SAPISID" || it.name == "__Secure-3PAPISID"
             }?.value ?: ""
 
-        val requestUrl = getMultiFormPath(folderId, pageToken ?: "", key)
-        val body = """--$BOUNDARY
-                    |content-type: application/http
-                    |content-transfer-encoding: binary
-                    |
-                    |GET $requestUrl
-                    |X-Goog-Drive-Client-Version: $driveVersion
-                    |authorization: ${generateSapisidhashHeader(sapisid)}
-                    |x-goog-authuser: 0
-                    |
-                    |--$BOUNDARY--""".trimMargin("|")
-            .toRequestBody("multipart/mixed; boundary=\"$BOUNDARY\"".toMediaType())
+            println("🔒 SAPISID = $sapisid")
 
-        val postUrl = buildString {
-            append("https://clients6.google.com/batch/drive/v2internal")
-            append("?${'$'}ct=multipart/mixed; boundary=\"$BOUNDARY\"")
-            append("&key=$key")
+            if (sapisid.isEmpty()) {
+                println("❌ SAPISID MISSING")
+            }
+
+            val requestUrl = getMultiFormPath(folderId, pageToken ?: "", key)
+            println("🌐 requestUrl = $requestUrl")
+
+            val authHeader = generateSapisidhashHeader(sapisid)
+            println("🔒 SAPISIDHASH = $authHeader")
+
+            val body = """--$BOUNDARY
+                        |content-type: application/http
+                        |content-transfer-encoding: binary
+                        |
+                        |GET $requestUrl
+                        |X-Goog-Drive-Client-Version: $driveVersion
+                        |authorization: $authHeader
+                        |x-goog-authuser: 0
+                        |
+                        |--$BOUNDARY--""".trimMargin("|")
+                .toRequestBody("multipart/mixed; boundary=\"$BOUNDARY\"".toMediaType())
+
+            val postUrl = buildString {
+                append("https://clients6.google.com/batch/drive/v2internal")
+                append("?${'$'}ct=multipart/mixed; boundary=\"$BOUNDARY\"")
+                append("&key=$key")
+            }
+
+            println("📡 postUrl = $postUrl")
+
+            val cookieHeader = getCookie("https://drive.google.com")
+            println("🍪 header cookies = $cookieHeader")
+
+            val postHeaders = headers.newBuilder().apply {
+                add("Content-Type", "text/plain; charset=UTF-8")
+                add("Origin", "https://drive.google.com")
+                add("Cookie", cookieHeader)
+            }.build()
+
+            println("✅ createPost END")
+
+            return POST(postUrl, body = body, headers = postHeaders)
+        } catch (e: Exception) {
+            println("❌ createPost ERROR: ${e.message}")
+            throw Exception("Failed to create post request: ${e.message}", e)
         }
-
-        val postHeaders = headers.newBuilder().apply {
-            add("Content-Type", "text/plain; charset=UTF-8")
-            add("Origin", "https://drive.google.com")
-            add("Cookie", getCookie("https://drive.google.com"))
-        }.build()
-
-        return POST(postUrl, body = body, headers = postHeaders)
     }
 
     private suspend fun parsePage(
