@@ -361,7 +361,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
             val title: String,
             val dateUpload: Long,
             val summary: String,
-            val previewUrl: String
+            val previewUrl: String,
         )
         val infoMap = mutableMapOf<Int, EpInfo>()
         try {
