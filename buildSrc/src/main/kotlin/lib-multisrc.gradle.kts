@@ -12,7 +12,7 @@ android {
         minSdk = AndroidConfig.minSdk
     }
 
-    namespace = "eu.kanade.tachiyomi.multisrc.${project.name}"
+    namespace = "eu.kanade.tachiyomi.multisrc.${project.name.replace("-", "_")}"
 
     sourceSets {
         named("main") {

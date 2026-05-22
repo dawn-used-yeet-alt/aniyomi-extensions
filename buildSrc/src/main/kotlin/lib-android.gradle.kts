@@ -11,7 +11,7 @@ android {
         minSdk = AndroidConfig.minSdk
     }
 
-    namespace = "eu.kanade.tachiyomi.lib.${project.name}"
+    namespace = "eu.kanade.tachiyomi.lib.${project.name.replace("-", "_")}"
 
     buildFeatures {
         androidResources = false
