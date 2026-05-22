@@ -246,17 +246,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                         }
                     }
 
-                    if (jsonObj.has("episodes")) {
-                        val episodes = jsonObj.getJSONObject("episodes")
-                        if (episodes.has("1")) {
-                            val ep1 = episodes.getJSONObject("1")
-                            val desc = ep1.optString("overview").takeIf { it.isNotBlank() }
-                                ?: ep1.optString("summary")
-                            if (desc.isNotBlank()) {
-                                anime.description = desc
-                            }
-                        }
-                    }
+                    // Removed anime.description fallback
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -367,7 +357,13 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
             it.value.substringAfter(",").split(",").map { it.toInt() }
         } ?: listOf(null, null)
 
-        val infoMap = mutableMapOf<Int, Pair<String, Long>>()
+        data class EpInfo(
+            val title: String,
+            val dateUpload: Long,
+            val summary: String,
+            val previewUrl: String
+        )
+        val infoMap = mutableMapOf<Int, EpInfo>()
         try {
             val folderId = match.groups["id"]!!.value
             val driveDocument = client.newCall(GET(parsed.url, headers = getHeaders)).execute().asJsoup()
@@ -391,7 +387,9 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                     val jsonObj = JSONObject(jsonString)
                     if (jsonObj.has("episodes")) {
                         val episodes = jsonObj.getJSONObject("episodes")
-                        episodes.keys().forEach { key ->
+                        val keys = episodes.keys()
+                        while (keys.hasNext()) {
+                            val key = keys.next()
                             val epNum = key.toIntOrNull()
                             if (epNum != null) {
                                 val epData = episodes.getJSONObject(key)
@@ -400,6 +398,9 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                                     ?: titleObj?.optString("ja")?.takeIf { it.isNotBlank() }
                                     ?: titleObj?.optString("x-jat")?.takeIf { it.isNotBlank() }
                                     ?: ""
+                                val summary = epData.optString("overview").takeIf { it.isNotBlank() }
+                                    ?: epData.optString("summary")
+                                val previewUrl = epData.optString("image")
 
                                 val airDateUtcStr = epData.optString("airDateUtc")
                                 var dateUpload = -1L
@@ -410,7 +411,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                                         dateUpload = sdf.parse(airDateUtcStr)?.time ?: -1L
                                     } catch (e: Exception) { }
                                 }
-                                infoMap[epNum] = Pair(titleEn, dateUpload)
+                                infoMap[epNum] = EpInfo(titleEn, dateUpload, summary, previewUrl)
                             }
                         }
                     }
@@ -472,8 +473,8 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                             ?: videoCounter.toFloat()
 
                         val info = infoMap[epNum.toInt()]
-                        val epName = if (info != null && info.first.isNotBlank()) {
-                            "Episode ${epNum.toInt()} - ${info.first}"
+                        val epName = if (info != null && info.title.isNotBlank()) {
+                            "Episode ${epNum.toInt()} - ${info.title}"
                         } else {
                             if (preferences.trimEpisodeName) it.title.trimInfo() else it.title
                         }
@@ -483,12 +484,14 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                                 name = epName
                                 url = "https://drive.google.com/uc?id=${it.id}"
                                 episode_number = epNum
-                                date_upload = info?.second?.takeIf { it > 0 } ?: -1L
+                                date_upload = info?.dateUpload?.takeIf { it > 0 } ?: -1L
                                 scanlator = if (preferences.scanlatorOrder) {
                                     "/$pathName • $size"
                                 } else {
                                     "$size • /$pathName"
                                 }
+                                if (info != null && info.summary.isNotBlank()) summary = info.summary
+                                if (info != null && info.previewUrl.isNotBlank()) preview_url = info.previewUrl
                             },
                         )
                         videoCounter++
