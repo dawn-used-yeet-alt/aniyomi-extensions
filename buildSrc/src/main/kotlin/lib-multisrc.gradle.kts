@@ -14,6 +14,11 @@ android {
 
     namespace = "eu.kanade.tachiyomi.multisrc.${project.name.replace("-", "_")}"
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     sourceSets {
         named("main") {
             manifest.srcFile("AndroidManifest.xml")

@@ -15,6 +15,8 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Hoster
+import eu.kanade.tachiyomi.animesource.model.Hoster.Companion.toHosterList
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.googledriveextractor.GoogleDriveExtractor
@@ -519,8 +521,10 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
 
     // ============================ Video Links =============================
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> =
-        GoogleDriveExtractor(client, headers).videosFromUrl(episode.url.substringAfter("?id="))
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val videos = GoogleDriveExtractor(client, headers).videosFromUrl(episode.url.substringAfter("?id="))
+        return videos.toHosterList()
+    }
 
     // ============================= Utilities ==============================
 

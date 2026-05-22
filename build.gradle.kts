@@ -10,7 +10,7 @@ allprojects {
 
     tasks.withType<KotlinCompile>().configureEach {
         compilerOptions {
-            jvmTarget.set(KotlinJvmTarget.JVM_1_8)
+            jvmTarget.set(KotlinJvmTarget.JVM_17)
         }
     }
 }

@@ -13,6 +13,11 @@ android {
 
     namespace = "eu.kanade.tachiyomi.lib.${project.name.replace("-", "_")}"
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     buildFeatures {
         androidResources = false
     }
@@ -25,5 +30,11 @@ dependencies {
 tasks.register("printDependentExtensions") {
     doLast {
         project.printDependentExtensions()
+    }
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+    kotlinOptions {
+        freeCompilerArgs += listOf("-Xskip-metadata-version-check")
     }
 }
