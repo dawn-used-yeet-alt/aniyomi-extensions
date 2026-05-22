@@ -15,8 +15,6 @@ import okhttp3.Response
 import uy.kohesive.injekt.injectLazy
 import kotlin.getValue
 
-import eu.kanade.tachiyomi.animesource.model.SSeason
-
 abstract class Source : ConfigurableAnimeSource, AnimeHttpSource() {
     protected val context: Application by injectLazy()
 
@@ -34,5 +32,5 @@ abstract class Source : ConfigurableAnimeSource, AnimeHttpSource() {
         }
     }
 
-    override fun seasonListParse(response: Response): List<SSeason> = throw UnsupportedOperationException("Not used.")
+    override fun seasonListParse(response: Response): List<SAnime> = throw UnsupportedOperationException("Not used.")
 }
