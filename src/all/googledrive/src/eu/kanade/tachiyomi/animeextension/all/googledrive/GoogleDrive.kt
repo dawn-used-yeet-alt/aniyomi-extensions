@@ -518,6 +518,8 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
 
     override fun episodeListParse(response: Response): List<SEpisode> = throw UnsupportedOperationException()
 
+    override fun seasonListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
+
     // ============================ Video Links =============================
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
