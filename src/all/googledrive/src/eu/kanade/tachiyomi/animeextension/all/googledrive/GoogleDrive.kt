@@ -198,6 +198,71 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
             null
         } ?: return anime
 
+        // info.json logic
+        var infoParsed = false
+        val infoQuery = "'$folderId' in parents and title = 'info.json' and trashed = false"
+        val infoSearchResponse = try {
+            client.newCall(
+                createPost(driveDocument, folderId, nextPageToken) { _, _, _ ->
+                    val q = URLEncoder.encode(infoQuery, "UTF-8")
+                    "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
+                },
+            ).execute().parseAs<PostResponse> { JSON_REGEX.find(it)!!.groupValues[1] }
+        } catch (e: Exception) { null }
+
+        infoSearchResponse?.items?.firstOrNull()?.let { item ->
+            val downloadUrl = "https://drive.google.com/uc?id=${item.id}&export=download"
+            val downloadHeaders = headers.newBuilder().apply {
+                add("Cookie", getCookie("https://drive.google.com"))
+                add("User-Agent", "Mozilla/5.0")
+            }.build()
+
+            try {
+                val jsonString = client.newCall(GET(downloadUrl, headers = downloadHeaders))
+                    .execute().body.string()
+
+                if (jsonString.trim().startsWith("{")) {
+                    val jsonObj = JSONObject(jsonString)
+                    infoParsed = true
+
+                    if (jsonObj.has("titles")) {
+                        val titles = jsonObj.getJSONObject("titles")
+                        val enTitle = titles.optString("en").takeIf { it.isNotBlank() }
+                            ?: titles.optString("ja").takeIf { it.isNotBlank() }
+                            ?: titles.optString("x-jat")
+                        if (enTitle.isNotBlank()) anime.title = enTitle
+                    }
+
+                    if (jsonObj.has("images")) {
+                        val images = jsonObj.getJSONArray("images")
+                        for (i in 0 until images.length()) {
+                            val img = images.getJSONObject(i)
+                            if (img.optString("coverType") == "Poster") {
+                                anime.thumbnail_url = img.optString("url")
+                                break
+                            } else if (img.optString("coverType") == "Banner" && anime.thumbnail_url.isNullOrEmpty()) {
+                                anime.thumbnail_url = img.optString("url")
+                            }
+                        }
+                    }
+
+                    if (jsonObj.has("episodes")) {
+                        val episodes = jsonObj.getJSONObject("episodes")
+                        if (episodes.has("1")) {
+                            val ep1 = episodes.getJSONObject("1")
+                            val desc = ep1.optString("overview").takeIf { it.isNotBlank() }
+                                ?: ep1.optString("summary")
+                            if (desc.isNotBlank()) {
+                                anime.description = desc
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
         // Fallback: If thumbnail is missing, try to find 'cover' image
         if (anime.thumbnail_url.isNullOrEmpty()) {
             val coverQuery = "'$folderId' in parents and title contains 'cover' and mimeType contains 'image/' and trashed = false"
@@ -238,10 +303,10 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                 if (jsonString.trim().startsWith("{")) {
                     val jsonObj = JSONObject(jsonString)
 
-                    if (jsonObj.has("title")) anime.title = jsonObj.getString("title")
+                    if (jsonObj.has("title") && !infoParsed) anime.title = jsonObj.getString("title")
                     if (jsonObj.has("author")) anime.author = jsonObj.getString("author")
                     if (jsonObj.has("artist")) anime.artist = jsonObj.getString("artist")
-                    if (jsonObj.has("description")) anime.description = jsonObj.getString("description")
+                    if (jsonObj.has("description") && anime.description.isNullOrEmpty()) anime.description = jsonObj.getString("description")
 
                     if (jsonObj.has("genre")) {
                         val genreData = jsonObj.optJSONArray("genre")
@@ -302,6 +367,59 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
             it.value.substringAfter(",").split(",").map { it.toInt() }
         } ?: listOf(null, null)
 
+        val infoMap = mutableMapOf<Int, Pair<String, Long>>()
+        try {
+            val folderId = match.groups["id"]!!.value
+            val driveDocument = client.newCall(GET(parsed.url, headers = getHeaders)).execute().asJsoup()
+            val infoQuery = "'$folderId' in parents and title = 'info.json' and trashed = false"
+            val infoSearchResponse = client.newCall(
+                createPost(driveDocument, folderId, null) { _, _, _ ->
+                    val q = URLEncoder.encode(infoQuery, "UTF-8")
+                    "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
+                }
+            ).execute().parseAs<PostResponse> { JSON_REGEX.find(it)!!.groupValues[1] }
+
+            infoSearchResponse.items?.firstOrNull()?.let { item ->
+                val downloadUrl = "https://drive.google.com/uc?id=${item.id}&export=download"
+                val downloadHeaders = headers.newBuilder().apply {
+                    add("Cookie", getCookie("https://drive.google.com"))
+                    add("User-Agent", "Mozilla/5.0")
+                }.build()
+
+                val jsonString = client.newCall(GET(downloadUrl, headers = downloadHeaders)).execute().body.string()
+                if (jsonString.trim().startsWith("{")) {
+                    val jsonObj = JSONObject(jsonString)
+                    if (jsonObj.has("episodes")) {
+                        val episodes = jsonObj.getJSONObject("episodes")
+                        episodes.keys().forEach { key ->
+                            val epNum = key.toIntOrNull()
+                            if (epNum != null) {
+                                val epData = episodes.getJSONObject(key)
+                                val titleObj = epData.optJSONObject("title")
+                                val titleEn = titleObj?.optString("en")?.takeIf { it.isNotBlank() }
+                                    ?: titleObj?.optString("ja")?.takeIf { it.isNotBlank() }
+                                    ?: titleObj?.optString("x-jat")?.takeIf { it.isNotBlank() }
+                                    ?: ""
+
+                                val airDateUtcStr = epData.optString("airDateUtc")
+                                var dateUpload = -1L
+                                if (airDateUtcStr.isNotBlank() && airDateUtcStr != "null") {
+                                    try {
+                                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+                                        sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                                        dateUpload = sdf.parse(airDateUtcStr)?.time ?: -1L
+                                    } catch (e: Exception) { }
+                                }
+                                infoMap[epNum] = Pair(titleEn, dateUpload)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         fun traverseFolder(folderUrl: String, path: String, recursionDepth: Int = 0) {
             if (recursionDepth == maxRecursionDepth) return
 
@@ -353,12 +471,19 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                         val epNum = ITEM_NUMBER_REGEX.find(it.title.trimInfo())?.groupValues?.get(1)?.toFloatOrNull()
                             ?: videoCounter.toFloat()
 
+                        val info = infoMap[epNum.toInt()]
+                        val epName = if (info != null && info.first.isNotBlank()) {
+                            "Episode ${epNum.toInt()} - ${info.first}"
+                        } else {
+                            if (preferences.trimEpisodeName) it.title.trimInfo() else it.title
+                        }
+
                         episodeList.add(
                             SEpisode.create().apply {
-                                name = if (preferences.trimEpisodeName) it.title.trimInfo() else it.title
+                                name = epName
                                 url = "https://drive.google.com/uc?id=${it.id}"
                                 episode_number = epNum
-                                date_upload = -1L
+                                date_upload = info?.second?.takeIf { it > 0 } ?: -1L
                                 scanlator = if (preferences.scanlatorOrder) {
                                     "/$pathName • $size"
                                 } else {
