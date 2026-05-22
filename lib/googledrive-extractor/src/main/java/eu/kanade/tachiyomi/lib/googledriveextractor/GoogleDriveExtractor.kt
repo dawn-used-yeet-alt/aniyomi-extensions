@@ -50,7 +50,7 @@ class GoogleDriveExtractor(private val client: OkHttpClient, private val headers
                 .removeAll("Host")
                 .build()
             return listOf(
-                Video(finalUrl, videoName + itemSize, finalUrl, videoHeaders)
+                Video(videoUrl = finalUrl, videoTitle = videoName + itemSize, headers = videoHeaders)
             )
         } finally {
             docResp.close()
