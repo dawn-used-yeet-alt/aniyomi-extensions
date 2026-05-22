@@ -376,7 +376,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                 createPost(driveDocument, folderId, null) { _, _, _ ->
                     val q = URLEncoder.encode(infoQuery, "UTF-8")
                     "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
-                }
+                },
             ).execute().parseAs<PostResponse> { JSON_REGEX.find(it)!!.groupValues[1] }
 
             infoSearchResponse.items?.firstOrNull()?.let { item ->
