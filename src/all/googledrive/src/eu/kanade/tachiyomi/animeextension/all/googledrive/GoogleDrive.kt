@@ -672,9 +672,9 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                         var finalCoverUrl = ""
                         try {
                             val subFolderId = folder.id
-                            
+
                             // 1. Try info.json first
-                            val infoQuery = "'${subFolderId}' in parents and title = 'info.json' and trashed = false"
+                            val infoQuery = "'$subFolderId' in parents and title = 'info.json' and trashed = false"
                             val infoRequest = createPost(driveDocument, subFolderId, null) { _, _, _ ->
                                 val q = URLEncoder.encode(infoQuery, "UTF-8")
                                 "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
@@ -705,7 +705,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                                     }
                                 }
                             }
-                            
+
                             // 2. Fallback to cover.jpg if info.json had no cover
                             if (finalCoverUrl.isEmpty()) {
                                 val coverQuery = "'$subFolderId' in parents and title contains 'cover' and mimeType contains 'image/' and trashed = false"
