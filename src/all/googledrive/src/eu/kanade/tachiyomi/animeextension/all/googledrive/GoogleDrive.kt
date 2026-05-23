@@ -238,7 +238,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                         val images = jsonObj.getJSONArray("images")
                         for (i in 0 until images.length()) {
                             val img = images.getJSONObject(i)
-                            if (img.optString("coverType") == "Poster" && anime.thumbnail_url.isNullOrEmpty()) {
+                            if (img.optString("coverType") == "Poster") {
                                 anime.thumbnail_url = img.optString("url")
                                 break
                             } else if (img.optString("coverType") == "Banner" && anime.thumbnail_url.isNullOrEmpty()) {
@@ -669,26 +669,61 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
             val folderCovers = coroutineScope {
                 folders.map { folder ->
                     async(Dispatchers.IO) {
-                        val coverUrl = try {
+                        var finalCoverUrl = ""
+                        try {
                             val subFolderId = folder.id
-                            val coverQuery = "'$subFolderId' in parents and title contains 'cover' and mimeType contains 'image/' and trashed = false"
-
-                            val coverRequest = createPost(driveDocument, subFolderId, null) { _, _, _ ->
-                                val q = URLEncoder.encode(coverQuery, "UTF-8")
+                            
+                            // 1. Try info.json first
+                            val infoQuery = "'${subFolderId}' in parents and title = 'info.json' and trashed = false"
+                            val infoRequest = createPost(driveDocument, subFolderId, null) { _, _, _ ->
+                                val q = URLEncoder.encode(infoQuery, "UTF-8")
                                 "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
                             }
-
-                            val coverResponse = client.newCall(coverRequest).execute().parseAs<PostResponse> { text ->
+                            val infoResponse = client.newCall(infoRequest).execute().parseAs<PostResponse> { text ->
                                 JSON_REGEX.find(text)!!.groupValues[1]
                             }
-
-                            coverResponse.items?.firstOrNull()?.let { coverItem ->
-                                "https://drive.google.com/uc?id=${coverItem.id}"
-                            } ?: ""
+                            infoResponse.items?.firstOrNull()?.let { infoItem ->
+                                val downloadUrl = "https://drive.google.com/uc?id=${infoItem.id}&export=download"
+                                val downloadHeaders = headers.newBuilder().apply {
+                                    add("Cookie", getCookie("https://drive.google.com"))
+                                    add("User-Agent", "Mozilla/5.0")
+                                }.build()
+                                val jsonString = client.newCall(GET(downloadUrl, headers = downloadHeaders)).execute().body.string()
+                                if (jsonString.trim().startsWith("{")) {
+                                    val jsonObj = JSONObject(jsonString)
+                                    if (jsonObj.has("images")) {
+                                        val images = jsonObj.getJSONArray("images")
+                                        for (i in 0 until images.length()) {
+                                            val img = images.getJSONObject(i)
+                                            if (img.optString("coverType") == "Poster") {
+                                                finalCoverUrl = img.optString("url")
+                                                break
+                                            } else if (img.optString("coverType") == "Banner" && finalCoverUrl.isEmpty()) {
+                                                finalCoverUrl = img.optString("url")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // 2. Fallback to cover.jpg if info.json had no cover
+                            if (finalCoverUrl.isEmpty()) {
+                                val coverQuery = "'$subFolderId' in parents and title contains 'cover' and mimeType contains 'image/' and trashed = false"
+                                val coverRequest = createPost(driveDocument, subFolderId, null) { _, _, _ ->
+                                    val q = URLEncoder.encode(coverQuery, "UTF-8")
+                                    "/drive/v2internal/files?q=$q&maxResults=1&projection=FULL"
+                                }
+                                val coverResponse = client.newCall(coverRequest).execute().parseAs<PostResponse> { text ->
+                                    JSON_REGEX.find(text)!!.groupValues[1]
+                                }
+                                coverResponse.items?.firstOrNull()?.let { coverItem ->
+                                    finalCoverUrl = "https://drive.google.com/uc?id=${coverItem.id}"
+                                }
+                            }
                         } catch (e: Exception) {
-                            ""
+                            // Ignore
                         }
-                        folder to coverUrl
+                        folder to finalCoverUrl
                     }
                 }.awaitAll()
             }.toMap()
