@@ -238,7 +238,7 @@ class GoogleDrive : ConfigurableAnimeSource, AnimeHttpSource() {
                         val images = jsonObj.getJSONArray("images")
                         for (i in 0 until images.length()) {
                             val img = images.getJSONObject(i)
-                            if (img.optString("coverType") == "Poster") {
+                            if (img.optString("coverType") == "Poster" && anime.thumbnail_url.isNullOrEmpty()) {
                                 anime.thumbnail_url = img.optString("url")
                                 break
                             } else if (img.optString("coverType") == "Banner" && anime.thumbnail_url.isNullOrEmpty()) {
