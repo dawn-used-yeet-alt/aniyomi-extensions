@@ -1,20 +1,20 @@
 {
   "eu.kanade.tachiyomi.animeextension.all.jellyfin": {
     "apk": {
-      "name": "aniyomi-all.jellyfin-v17.2-release.apk",
-      "sha256": "be6028c529b767a6bbcf3ec063dad9aeecb1497f237529fe6b3ae61d75d10910"
+      "name": "aniyomi-all.jellyfin-v17.3-release.apk",
+      "sha256": "1bee65edb9290f9470ea371449ae34ad65955563d39b659905bf89a4132ba976"
     }
   },
   "eu.kanade.tachiyomi.animeextension.all.stremio": {
     "apk": {
       "name": "aniyomi-all.stremio-v17.2-release.apk",
-      "sha256": "b472eb68915d00a01bd2bac1b2faa67434c4253241d71bf36b7e4072e1679a68"
+      "sha256": "0e1eff60024b0656481edf4bd5ffbceb6c8de7910bc51d0601b3f7f9aaee0ba2"
     }
   },
   "eu.kanade.tachiyomi.animeextension.all.torbox": {
     "apk": {
       "name": "aniyomi-all.torbox-v17.2-release.apk",
-      "sha256": "f3a1cbe43664079afc591bf93192b9a1d10486901c64da0e4519914c8f6e0286"
+      "sha256": "5ca5663d0e31c77a9b33c9287ef1c8d016e6818bd8b35e9efa66b46f4ebef0a9"
     }
   }
 }
