@@ -10,6 +10,7 @@ on:
       - '!.github/**'
       - '.github/scripts/**'
       - '.github/workflows/build_push.yml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}
@@ -53,7 +54,7 @@ jobs:
 
       - name: Upload APKs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: "github.repository == 'Secozzi/aniyomi-extensions'"
+        if: "github.repository == 'dawn-used-yeet-alt/aniyomi-extensions'"
         with:
           name: "individual-apks"
           path: |
@@ -71,11 +72,13 @@ jobs:
       - build
     if: >-
       always() &&
-      github.repository == 'Secozzi/aniyomi-extensions' &&
+      github.repository == 'dawn-used-yeet-alt/aniyomi-extensions' &&
       needs.build.result != 'failure' &&
       needs.build.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: write
     steps:
       - name: Download APK artifacts
         if: needs.build.result == 'success'
@@ -92,13 +95,13 @@ jobs:
       - name: Checkout repo branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GH_PAT || github.token }}
           ref: repo
           path: repo
 
       - name: Publish and deploy repo
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
           cd repo
           pip install protobuf
@@ -111,8 +114,8 @@ jobs:
             git commit -m "Update extensions repo"
             gh auth setup-git
             git push
-            curl https://purge.jsdelivr.net/gh/Secozzi/aniyomi-extensions@repo/index.json
-            curl https://purge.jsdelivr.net/gh/Secozzi/aniyomi-extensions@repo/index.pb
+            curl https://purge.jsdelivr.net/gh/${{ github.repository }}@repo/index.json
+            curl https://purge.jsdelivr.net/gh/${{ github.repository }}@repo/index.pb
           else
             echo "No changes to commit"
           fi

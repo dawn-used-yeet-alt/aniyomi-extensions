@@ -7,14 +7,14 @@ This repository contains the available extension catalogues for the [Aniyomi](ht
 
 ## Automatic installation
 
-[![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://extension-store?url=https%3A%2F%2Fgithub.com%2FSecozzi%2Faniyomi-extensions%2Fraw%2Frepo%2Findex.pb)
+[![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://extension-store?url=https%3A%2F%2Fgithub.com%2Fdawn-used-yeet-alt%2Faniyomi-extensions%2Fraw%2Frepo%2Findex.pb)
 
 ## Manual installation
 
 Add the following link under **Settings > Browse > Extension stores**
 
 ```
-https://github.com/Secozzi/aniyomi-extensions/raw/repo/index.pb
+https://github.com/dawn-used-yeet-alt/aniyomi-extensions/raw/repo/index.pb
 ```
 
 # Usage
@@ -23,7 +23,7 @@ Extension sources can be downloaded, installed, and uninstalled via the main Ani
 
 ## Downloads
 
-If you prefer to directly download the APK files, they are available in this GitHub repository in the [`repo` branch](https://github.com/Secozzi/aniyomi-extensions/tree/repo/apk).
+If you prefer to directly download the APK files, they are available in this GitHub repository in the [`repo` branch](https://github.com/dawn-used-yeet-alt/aniyomi-extensions/tree/repo/apk).
 
 # Requests
 
@@ -33,7 +33,7 @@ I unfortunately do not take requests, as this repo is only for extensions I use 
 
 Contributions are welcome!
 
-Check out the repo's [issue backlog](https://github.com/Secozzi/aniyomi-extensions/issues) for source requests and bug reports.
+Check out the repo's [issue backlog](https://github.com/dawn-used-yeet-alt/aniyomi-extensions/issues) for source requests and bug reports.
 
 To get started with development, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 

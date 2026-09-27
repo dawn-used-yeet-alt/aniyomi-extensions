@@ -15,7 +15,7 @@ concurrency:
 jobs:
   cleanup:
     name: Remove unreferenced release assets
-    if: github.repository == 'Secozzi/aniyomi-extensions'
+    if: github.repository == 'dawn-used-yeet-alt/aniyomi-extensions'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:

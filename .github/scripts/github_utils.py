@@ -1,7 +1,9 @@
+import os
 import subprocess
 import json
 
-REPO_NAME = "Secozzi/aniyomi-extensions"
+# GITHUB_REPOSITORY is set by Actions; default keeps local runs on upstream.
+REPO_NAME = os.environ.get("GITHUB_REPOSITORY", "dawn-used-yeet-alt/aniyomi-extensions")
 
 def run_gh(*args: str, success_errors: tuple[str, ...] = ()) -> str | None:
     result = subprocess.run(

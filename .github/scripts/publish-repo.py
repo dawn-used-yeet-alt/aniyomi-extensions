@@ -15,7 +15,7 @@ ARTIFACTS_DIR = Path.home() / "apk-artifacts"
 # The checked-out `repo` branch we publish into (the working directory).
 REPO_DIR = Path.cwd()
 
-ICON_BASE_URL = "https://cdn.jsdelivr.net/gh/secozzi/aniyomi-extensions@master"
+ICON_BASE_URL = f"https://cdn.jsdelivr.net/gh/{REPO_NAME}@master"
 RELEASE_BASE_URL = f"https://github.com/{REPO_NAME}/releases/download"
 
 current_sha = sys.argv[1]
@@ -136,9 +136,9 @@ final_extensions.sort(key=lambda ext: ext.packageName)
 index = index_pb2.Index(
     name="Jellyfin, Stremio, and Torbox",
     badgeLabel="SECO",
-    signingKey="480e90b05421e4f92fb789af27760718796e57b87c1a1ad66c55fa1f0a82df3e",
+    signingKey="c2b17e284cdbbd94818149772e975f55657c1825beb8e7851af7e789f481c5d8",
     contact=index_pb2.Contact(
-        website="https://github.com/Secozzi/aniyomi-extensions",
+        website=f"https://github.com/{REPO_NAME}",
     ),
     extensionList=index_pb2.ExtensionList(extensions=final_extensions),
 )
@@ -178,7 +178,7 @@ def create_release(tag: str):
         return
 
     print(f"Creating release {tag}")
-    run_gh(
+    if run_gh(
         "release",
         "create",
         tag,
@@ -188,8 +188,10 @@ def create_release(tag: str):
         "--title",
         f"Repository Update {tag}",
         "--notes",
-        f"Automated update from Secozzi/aniyomi-extensions@{current_sha}",
-    )
+        f"Automated update from {REPO_NAME}@{current_sha}",
+    ) is None:
+        print(f"Failed to create release {tag}, check token permissions")
+        sys.exit(1)
 
 
 def publish_release(tag: str):
