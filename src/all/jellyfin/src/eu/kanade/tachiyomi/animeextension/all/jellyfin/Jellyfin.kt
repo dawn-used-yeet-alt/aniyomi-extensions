@@ -550,8 +550,6 @@ class Jellyfin(private val suffix: String) :
 
             listOf(client.get(url).parseAs<ItemDto>())
         } else {
-            // Seasons store their parent id in memo; Series entries (and older
-            // library entries) have no seriesId, so fall back to their own id.
             val seriesId = anime.memo.seriesId ?: anime.url
             val episodesUrl = baseUrl.toHttpUrl().newBuilder().apply {
                 addPathSegment("Shows")
@@ -1153,7 +1151,6 @@ class Jellyfin(private val suffix: String) :
     private val SharedPreferences.burnSub by preferences.delegate(PREF_BURN_SUB_KEY, PREF_BURN_SUB_DEFAULT)
     private val SharedPreferences.seriesDetails: Set<String>
         get() {
-            // Migrate from the old boolean switch: enabled means all fields.
             if (!contains(PREF_SERIES_DETAILS_KEY) && getBoolean(PREF_INFO_TYPE, PREF_INFO_DEFAULT)) {
                 return PREF_SERIES_DETAILS.toSet()
             }
@@ -1233,8 +1230,6 @@ class Jellyfin(private val suffix: String) :
     private var pendingQuickConnectCode: String? = null
     private val loginGeneration = AtomicInteger(0)
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // One-time migration from the old boolean switch to the multi-select:
-        // enabled means all fields, then drop the old key.
         if (!preferences.contains(PREF_SERIES_DETAILS_KEY) &&
             preferences.getBoolean(PREF_INFO_TYPE, PREF_INFO_DEFAULT)
         ) {
