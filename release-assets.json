@@ -1,8 +1,8 @@
 {
   "eu.kanade.tachiyomi.animeextension.all.jellyfin": {
     "apk": {
-      "name": "aniyomi-all.jellyfin-v17.4-release.apk",
-      "sha256": "e724e8fe3a09dc84cb166addec928d814b8e2277d94cf42f5b9002d7c32a7cd3"
+      "name": "aniyomi-all.jellyfin-v17.6-release.apk",
+      "sha256": "da5f907bc1cf918d8e9ac17d80874177f0b8790a463bf5a13d00f642ca89fa0d"
     }
   },
   "eu.kanade.tachiyomi.animeextension.all.stremio": {
