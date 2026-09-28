@@ -7,7 +7,7 @@ plugins {
 extension {
     name = "Jellyfin"
     qname = "JellyfinFactory"
-    versionCode = 3
+    versionCode = 4
     versionId = 3
     contentWarning = ContentWarning.SAFE
     sourceNames = listOf("Jellyfin (1)", "Jellyfin (2)", "Jellyfin (3)")
