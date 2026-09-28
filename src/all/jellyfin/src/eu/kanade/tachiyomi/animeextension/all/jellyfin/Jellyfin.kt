@@ -79,7 +79,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.jvm.Volatile
-import okhttp3.RequestBody.Companion.toRequestBody as toByteArrayRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody as toRawRequestBody
 
 class Jellyfin(private val suffix: String) :
     Source(),
@@ -117,26 +117,22 @@ class Jellyfin(private val suffix: String) :
         .addInterceptor { chain ->
             val request = chain.request()
 
-            // Login flows supply their own Authorization header with a fresh
-            // token; don't require (or overwrite) the stored one in that case.
-            if (request.header("Authorization") != null) {
-                return@addInterceptor chain.proceed(request)
+            // Login and Quick Connect flows supply their own Authorization
+            // header, so don't require (or overwrite) the stored token there.
+            if (request.header("Authorization") == null && !isUnauthenticatedPath(request.url.encodedPath)) {
+                val apiKey = preferences.apiKey
+                if (apiKey.isBlank()) {
+                    throw IOException("Please login in extension settings")
+                }
+
+                val authRequest = request.newBuilder()
+                    .addHeader("Authorization", getAuthHeader(deviceInfo, apiKey))
+                    .build()
+
+                return@addInterceptor chain.proceed(authRequest)
             }
 
-            if (isUnauthenticatedPath(request.url.encodedPath)) {
-                return@addInterceptor chain.proceed(request)
-            }
-
-            val apiKey = preferences.apiKey
-            if (apiKey.isBlank()) {
-                throw IOException("Please login in extension settings")
-            }
-
-            val authRequest = request.newBuilder()
-                .addHeader("Authorization", getAuthHeader(deviceInfo, apiKey))
-                .build()
-
-            chain.proceed(authRequest)
+            chain.proceed(request)
         }
         .build()
 
@@ -810,11 +806,10 @@ class Jellyfin(private val suffix: String) :
 
     private fun randomString(length: Int = 16): String {
         val charPool = ('a'..'z') + ('0'..'9')
-        val random = SecureRandom()
 
         return buildString(length) {
-            (0 until length).forEach { _ ->
-                append(charPool[random.nextInt(charPool.size)])
+            repeat(length) {
+                append(charPool[SECURE_RANDOM.nextInt(charPool.size)])
             }
         }
     }
@@ -836,21 +831,17 @@ class Jellyfin(private val suffix: String) :
     }
 
     private suspend fun authenticate(username: String, password: String): LoginDto {
-        val authHeaders = Headers.headersOf("Authorization", getAuthHeader(deviceInfo))
-
         val body = buildJsonObject {
             put("Username", username)
             put("Pw", password)
         }.toRequestBody()
 
         try {
-            val resp = client.post(
+            return client.post(
                 url = "$baseUrl/Users/AuthenticateByName",
-                headers = authHeaders,
+                headers = quickConnectAuthHeaders(),
                 body = body,
-            )
-
-            return resp.parseAs<LoginDto>()
+            ).parseAs<LoginDto>()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -859,14 +850,16 @@ class Jellyfin(private val suffix: String) :
         }
     }
 
-    private suspend fun initiateQuickConnect(): QuickConnectResultDto {
-        val authHeaders = Headers.headersOf("Authorization", getAuthHeader(deviceInfo))
+    private fun quickConnectAuthHeaders(): Headers = Headers.headersOf("Authorization", getAuthHeader(deviceInfo))
 
+    private fun authenticatedHeaders(accessToken: String): Headers = Headers.headersOf("Authorization", getAuthHeader(deviceInfo, accessToken))
+
+    private suspend fun initiateQuickConnect(): QuickConnectResultDto {
         try {
             val result = client.post(
                 url = "$baseUrl/QuickConnect/Initiate",
-                headers = authHeaders,
-                body = byteArrayOf().toByteArrayRequestBody(null),
+                headers = quickConnectAuthHeaders(),
+                body = byteArrayOf().toRawRequestBody(null),
             ).parseAs<QuickConnectResultDto>()
             require(result.secret.isNotBlank() && result.code.isNotBlank()) {
                 "Server returned an empty Quick Connect code"
@@ -884,21 +877,19 @@ class Jellyfin(private val suffix: String) :
     }
 
     private suspend fun getQuickConnectState(secret: String): QuickConnectResultDto {
-        val authHeaders = Headers.headersOf("Authorization", getAuthHeader(deviceInfo))
-
         val url = baseUrl.toHttpUrl().newBuilder().apply {
             addPathSegment("QuickConnect")
             addPathSegment("Connect")
             addQueryParameter("secret", secret)
         }.build()
 
-        return client.get(url, authHeaders).parseAs<QuickConnectResultDto>()
+        return client.get(url, quickConnectAuthHeaders()).parseAs<QuickConnectResultDto>()
     }
 
     private suspend fun pollQuickConnect(
         secret: String,
-        maxAttempts: Int = QUICKCONNECT_MAX_ATTEMPTS,
-        intervalMs: Long = QUICKCONNECT_POLL_INTERVAL_MS,
+        maxAttempts: Int = QUICK_CONNECT_MAX_ATTEMPTS,
+        intervalMs: Long = QUICK_CONNECT_POLL_INTERVAL_MS,
     ): QuickConnectResultDto {
         repeat(maxAttempts) { attempt ->
             currentCoroutineContext().ensureActive()
@@ -911,25 +902,7 @@ class Jellyfin(private val suffix: String) :
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val isLastAttempt = attempt == maxAttempts - 1
-                when {
-                    e is HttpException && e.code == 404 -> throw Exception("Code expired, please try again", e)
-                    e is HttpException && (e.code in 500..599 || e.code == 429) -> {
-                        Log.w(LOG_TAG, "Quick Connect poll transient server error, retrying", e)
-                        if (isLastAttempt) throw Exception("Server error while waiting for approval", e)
-                    }
-                    e is HttpException -> {
-                        Log.e(LOG_TAG, "Quick Connect poll failed", e)
-                        throw e
-                    }
-                    e is IOException -> {
-                        Log.w(LOG_TAG, "Quick Connect poll network error, retrying", e)
-                        if (isLastAttempt) throw Exception("Network error while waiting for approval", e)
-                    }
-                    e is SerializationException || e is IllegalArgumentException ->
-                        throw Exception("Unexpected server response", e)
-                    else -> throw e
-                }
+                handleQuickConnectPollError(e, attempt == maxAttempts - 1)
             }
             if (attempt < maxAttempts - 1) {
                 delay(intervalMs)
@@ -938,9 +911,29 @@ class Jellyfin(private val suffix: String) :
         throw Exception("Timed out waiting for approval")
     }
 
-    private suspend fun authenticateWithQuickConnect(secret: String): LoginDto {
-        val authHeaders = Headers.headersOf("Authorization", getAuthHeader(deviceInfo))
+    private fun handleQuickConnectPollError(e: Exception, isLastAttempt: Boolean) {
+        when {
+            e is HttpException && e.code == 404 ->
+                throw Exception("Code expired, please try again", e)
+            e is HttpException && (e.code in 500..599 || e.code == 429) -> {
+                Log.w(LOG_TAG, "Quick Connect poll transient server error, retrying", e)
+                if (isLastAttempt) throw Exception("Server error while waiting for approval", e)
+            }
+            e is HttpException -> {
+                Log.e(LOG_TAG, "Quick Connect poll failed", e)
+                throw e
+            }
+            e is IOException -> {
+                Log.w(LOG_TAG, "Quick Connect poll network error, retrying", e)
+                if (isLastAttempt) throw Exception("Network error while waiting for approval", e)
+            }
+            e is SerializationException || e is IllegalArgumentException ->
+                throw Exception("Unexpected server response", e)
+            else -> throw e
+        }
+    }
 
+    private suspend fun authenticateWithQuickConnect(secret: String): LoginDto {
         val body = buildJsonObject {
             put("Secret", secret)
         }.toRequestBody()
@@ -948,7 +941,7 @@ class Jellyfin(private val suffix: String) :
         try {
             return client.post(
                 url = "$baseUrl/Users/AuthenticateWithQuickConnect",
-                headers = authHeaders,
+                headers = quickConnectAuthHeaders(),
                 body = body,
             ).parseAs<LoginDto>()
         } catch (e: CancellationException) {
@@ -966,9 +959,7 @@ class Jellyfin(private val suffix: String) :
             addPathSegment("Items")
         }.build()
 
-        val authHeaders = Headers.headersOf("Authorization", getAuthHeader(deviceInfo, accessToken))
-
-        return client.get(getLibrariesUrl, authHeaders).parseAs<ItemListDto>()
+        return client.get(getLibrariesUrl, authenticatedHeaders(accessToken)).parseAs<ItemListDto>()
             .items
             .filterNot { it.collectionType in LIBRARY_BLACKLIST }
             .map { MediaLibraryDto(it.name, it.id) }
@@ -985,12 +976,7 @@ class Jellyfin(private val suffix: String) :
 
     private fun isUnauthenticatedPath(path: String): Boolean {
         val lastTwo = path.trim('/').split('/').takeLast(2).joinToString("/")
-        return lastTwo in setOf(
-            "Users/AuthenticateByName",
-            "Users/AuthenticateWithQuickConnect",
-            "QuickConnect/Initiate",
-            "QuickConnect/Connect",
-        )
+        return lastTwo in UNAUTHENTICATED_PATH_SUFFIXES
     }
 
     private fun getItemsUrl(startIndex: Int): HttpUrl = baseUrl.toHttpUrl().newBuilder().apply {
@@ -1050,9 +1036,18 @@ class Jellyfin(private val suffix: String) :
         private const val MEDIA_LIBRARY_KEY = "library_pref"
         private const val MEDIA_LIBRARY_DEFAULT = ""
 
-        private const val QUICKCONNECT_PREF_KEY = "quick_connect_login"
-        private const val QUICKCONNECT_POLL_INTERVAL_MS = 5000L
-        private const val QUICKCONNECT_MAX_ATTEMPTS = 60
+        private const val QUICK_CONNECT_PREF_KEY = "quick_connect_login"
+        private const val QUICK_CONNECT_POLL_INTERVAL_MS = 5000L
+        private const val QUICK_CONNECT_MAX_ATTEMPTS = 60
+
+        private val UNAUTHENTICATED_PATH_SUFFIXES = setOf(
+            "Users/AuthenticateByName",
+            "Users/AuthenticateWithQuickConnect",
+            "QuickConnect/Initiate",
+            "QuickConnect/Connect",
+        )
+
+        private val SECURE_RANDOM = SecureRandom()
 
         private const val PREF_EPISODE_NAME_TEMPLATE_KEY = "pref_episode_name_template"
         private const val PREF_EPISODE_NAME_TEMPLATE_DEFAULT = "{type} {number} - {title}"
@@ -1148,6 +1143,57 @@ class Jellyfin(private val suffix: String) :
         preferences.apiKey = ""
     }
 
+    private data class LoginSnapshot(
+        val userId: String,
+        val apiKey: String,
+        val libraryList: String,
+        val selectedLibrary: String,
+    )
+
+    private fun snapshotLogin() = LoginSnapshot(
+        userId = preferences.userId,
+        apiKey = preferences.apiKey,
+        libraryList = preferences.libraryList,
+        selectedLibrary = preferences.selectedLibrary,
+    )
+
+    private fun restoreLogin(snapshot: LoginSnapshot) {
+        preferences.userId = snapshot.userId
+        preferences.apiKey = snapshot.apiKey
+        preferences.libraryList = snapshot.libraryList
+        preferences.selectedLibrary = snapshot.selectedLibrary
+    }
+
+    private suspend fun fetchLoginLibraries(loginDto: LoginDto): List<MediaLibraryDto> = fetchLibraries(loginDto.sessionInfo.userId, loginDto.accessToken)
+
+    private fun saveLogin(loginDto: LoginDto, libraries: List<MediaLibraryDto>) {
+        preferences.userId = loginDto.sessionInfo.userId
+        preferences.apiKey = loginDto.accessToken
+        preferences.libraryList = json.encodeToString<List<MediaLibraryDto>>(libraries)
+    }
+
+    private fun loginErrorMessage(e: Exception): String = when {
+        e is HttpException && e.code == 401 -> "Invalid credentials or unauthorized"
+        e is HttpException && e.code == 404 -> "Not found"
+        e is HttpException && e.code == 429 -> "Rate limited, try again later"
+        e is HttpException && e.code in 500..599 -> "Server error (${e.code})"
+        e is HttpException -> "HTTP ${e.code}"
+        e is SerializationException -> "Unexpected server response"
+        e is IOException -> "Network error: check server address and connection"
+        else -> e.message?.takeIf { it.isNotBlank() } ?: "Unknown error"
+    }
+
+    private fun mediaLibrarySummary(loggedIn: Boolean): String = if (loggedIn) "Selected: %s" else "Currently not logged in"
+
+    private fun quickConnectWaitingSummary(code: String): String = "Enter code $code on your server (Dashboard → Quick Connect), waiting for approval. Tap to cancel."
+
+    private fun cancelOngoingLogin() {
+        loginGeneration.incrementAndGet()
+        pendingQuickConnectCode = null
+        loginJob?.cancel()
+        loginJob = null
+    }
+
     private var loginJob: Job? = null
     private val loginScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -1155,19 +1201,6 @@ class Jellyfin(private val suffix: String) :
     private var pendingQuickConnectCode: String? = null
     private val loginGeneration = AtomicInteger(0)
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        fun mediaLibrarySummary(loggedIn: Boolean): String = if (loggedIn) "Selected: %s" else "Currently not logged in"
-
-        fun userMessage(e: Exception): String = when {
-            e is HttpException && e.code == 401 -> "Invalid credentials or unauthorized"
-            e is HttpException && e.code == 404 -> "Not found"
-            e is HttpException && e.code == 429 -> "Rate limited, try again later"
-            e is HttpException && e.code in 500..599 -> "Server error (${e.code})"
-            e is HttpException -> "HTTP ${e.code}"
-            e is SerializationException -> "Unexpected server response"
-            e is IOException -> "Network error: check server address and connection"
-            else -> e.message?.takeIf { it.isNotBlank() } ?: "Unknown error"
-        }
-
         val libraryList = json.decodeFromString<List<MediaLibraryDto>>(preferences.libraryList)
         val mediaLibraryPref = screen.getListPreference(
             key = MEDIA_LIBRARY_KEY,
@@ -1180,8 +1213,9 @@ class Jellyfin(private val suffix: String) :
         )
 
         val quickConnectDefaultSummary = "Get a code to approve on your server, no password needed"
+        // Switch stays off and acts as a button: tap starts (or cancels) the flow.
         val quickConnectPref = screen.getSwitchPreference(
-            key = QUICKCONNECT_PREF_KEY,
+            key = QUICK_CONNECT_PREF_KEY,
             default = false,
             title = "Log in with Quick Connect",
             summary = quickConnectDefaultSummary,
@@ -1216,18 +1250,12 @@ class Jellyfin(private val suffix: String) :
         }
 
         fun cancelLogin() {
-            loginGeneration.incrementAndGet()
-            pendingQuickConnectCode = null
-            loginJob?.cancel()
-            loginJob = null
+            cancelOngoingLogin()
             onCompleteLogin(preferences.apiKey.isNotBlank())
         }
 
         fun logout() {
-            loginGeneration.incrementAndGet()
-            pendingQuickConnectCode = null
-            loginJob?.cancel()
-            loginJob = null
+            cancelOngoingLogin()
             clearCredentials()
             onCompleteLogin(false)
         }
@@ -1242,10 +1270,7 @@ class Jellyfin(private val suffix: String) :
         }
 
         fun logIn() {
-            val previousUserId = preferences.userId
-            val previousApiKey = preferences.apiKey
-            val previousLibraryList = preferences.libraryList
-            val previousLibrary = preferences.selectedLibrary
+            val snapshot = snapshotLogin()
             val generation = loginGeneration.incrementAndGet()
 
             setLoginLoading("Loading...")
@@ -1254,12 +1279,9 @@ class Jellyfin(private val suffix: String) :
             loginJob = loginScope.launch {
                 try {
                     val loginDto = authenticate(preferences.username, preferences.password)
-                    val libraries = fetchLibraries(loginDto.sessionInfo.userId, loginDto.accessToken)
+                    val libraries = fetchLoginLibraries(loginDto)
                     if (generation != loginGeneration.get()) return@launch
-
-                    preferences.userId = loginDto.sessionInfo.userId
-                    preferences.apiKey = loginDto.accessToken
-                    preferences.libraryList = json.encodeToString<List<MediaLibraryDto>>(libraries)
+                    saveLogin(loginDto, libraries)
 
                     displayToast("Login successful")
 
@@ -1270,18 +1292,12 @@ class Jellyfin(private val suffix: String) :
                     throw e
                 } catch (e: Exception) {
                     if (generation != loginGeneration.get()) return@launch
-
-                    preferences.userId = previousUserId
-                    preferences.apiKey = previousApiKey
-                    preferences.libraryList = previousLibraryList
-                    preferences.selectedLibrary = previousLibrary
-
-                    val message = userMessage(e)
+                    restoreLogin(snapshot)
 
                     Log.e(LOG_TAG, "Failed to login", e)
-                    displayToast("Login failed: $message")
+                    displayToast("Login failed: ${loginErrorMessage(e)}")
                     handler.post {
-                        if (generation == loginGeneration.get()) onCompleteLogin(previousApiKey.isNotBlank())
+                        if (generation == loginGeneration.get()) onCompleteLogin(snapshot.apiKey.isNotBlank())
                     }
                 } finally {
                     if (generation == loginGeneration.get()) loginJob = null
@@ -1300,10 +1316,7 @@ class Jellyfin(private val suffix: String) :
                 return
             }
 
-            val previousUserId = preferences.userId
-            val previousApiKey = preferences.apiKey
-            val previousLibraryList = preferences.libraryList
-            val previousLibrary = preferences.selectedLibrary
+            val snapshot = snapshotLogin()
             val generation = loginGeneration.incrementAndGet()
 
             setLoginLoading("Requesting Quick Connect code...")
@@ -1319,21 +1332,16 @@ class Jellyfin(private val suffix: String) :
                     handler.post {
                         if (generation != loginGeneration.get()) return@post
                         quickConnectPref.setEnabled(true)
-                        quickConnectPref.summary =
-                            "Enter code ${initiated.code} on your server " +
-                            "(Dashboard → Quick Connect), waiting for approval. Tap to cancel."
+                        quickConnectPref.summary = quickConnectWaitingSummary(initiated.code)
                     }
-                    val suffix = if (copied) " (copied)" else ""
-                    displayToast("Quick Connect code: ${initiated.code}$suffix", Toast.LENGTH_LONG)
+                    val copyNote = if (copied) " (copied)" else ""
+                    displayToast("Quick Connect code: ${initiated.code}$copyNote", Toast.LENGTH_LONG)
 
                     val authorized = pollQuickConnect(initiated.secret)
                     val loginDto = authenticateWithQuickConnect(authorized.secret)
-                    val libraries = fetchLibraries(loginDto.sessionInfo.userId, loginDto.accessToken)
+                    val libraries = fetchLoginLibraries(loginDto)
                     if (generation != loginGeneration.get()) return@launch
-
-                    preferences.userId = loginDto.sessionInfo.userId
-                    preferences.apiKey = loginDto.accessToken
-                    preferences.libraryList = json.encodeToString<List<MediaLibraryDto>>(libraries)
+                    saveLogin(loginDto, libraries)
 
                     displayToast("Login successful")
 
@@ -1344,16 +1352,12 @@ class Jellyfin(private val suffix: String) :
                     throw e
                 } catch (e: Exception) {
                     if (generation != loginGeneration.get()) return@launch
-
-                    preferences.userId = previousUserId
-                    preferences.apiKey = previousApiKey
-                    preferences.libraryList = previousLibraryList
-                    preferences.selectedLibrary = previousLibrary
+                    restoreLogin(snapshot)
 
                     Log.e(LOG_TAG, "Failed to login with Quick Connect", e)
-                    displayToast("Quick Connect failed: ${userMessage(e)}")
+                    displayToast("Quick Connect failed: ${loginErrorMessage(e)}")
                     handler.post {
-                        if (generation == loginGeneration.get()) onCompleteLogin(previousApiKey.isNotBlank())
+                        if (generation == loginGeneration.get()) onCompleteLogin(snapshot.apiKey.isNotBlank())
                     }
                 } finally {
                     if (generation == loginGeneration.get()) loginJob = null
@@ -1370,9 +1374,7 @@ class Jellyfin(private val suffix: String) :
             val code = pendingQuickConnectCode
             if (code != null) {
                 quickConnectPref.setEnabled(true)
-                quickConnectPref.summary =
-                    "Enter code $code on your server " +
-                    "(Dashboard → Quick Connect), waiting for approval. Tap to cancel."
+                quickConnectPref.summary = quickConnectWaitingSummary(code)
                 mediaLibraryPref.setEnabled(false)
                 mediaLibraryPref.summary = "Waiting for Quick Connect approval..."
             } else {
