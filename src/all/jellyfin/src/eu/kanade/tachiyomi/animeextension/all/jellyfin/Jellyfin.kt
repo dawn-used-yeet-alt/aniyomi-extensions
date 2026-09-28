@@ -68,6 +68,7 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Dns
 import okhttp3.Headers
@@ -536,11 +537,16 @@ class Jellyfin(private val suffix: String) :
 
             listOf(client.get(url).parseAs<ItemDto>())
         } else {
+            // Seasons store their parent id in memo; Series entries (and older
+            // library entries) have no seriesId, so fall back to their own id.
+            val seriesId = anime.memo.seriesId ?: anime.url
             val episodesUrl = baseUrl.toHttpUrl().newBuilder().apply {
                 addPathSegment("Shows")
-                addPathSegment(anime.memo.seriesId)
+                addPathSegment(seriesId)
                 addPathSegment("Episodes")
-                addQueryParameter("seasonId", anime.url)
+                if (anime.memo.type == ItemType.Season) {
+                    addQueryParameter("seasonId", anime.url)
+                }
                 addQueryParameter("userId", preferences.userId)
                 addQueryParameter("Fields", "Overview,MediaSources,DateCreated,OriginalTitle,SortName")
             }.build()
@@ -972,8 +978,8 @@ class Jellyfin(private val suffix: String) :
         get() = getString("userId")
     val JsonObject.type
         get() = getType("type")
-    val JsonObject.seriesId
-        get() = getString("seriesId")
+    val JsonObject.seriesId: String?
+        get() = get("seriesId")?.jsonPrimitive?.contentOrNull
 
     private fun isUnauthenticatedPath(path: String): Boolean {
         val lastTwo = path.trim('/').split('/').takeLast(2).joinToString("/")
