@@ -11,12 +11,12 @@
         "name": "Jellyfin",
         "packageName": "eu.kanade.tachiyomi.animeextension.all.jellyfin",
         "resources": {
-          "apkUrl": "https://github.com/dawn-used-yeet-alt/aniyomi-extensions/releases/download/da9bf57/aniyomi-all.jellyfin-v17.6-release.apk",
+          "apkUrl": "https://github.com/dawn-used-yeet-alt/aniyomi-extensions/releases/download/400862a/aniyomi-all.jellyfin-v17.7-release.apk",
           "iconUrl": "https://cdn.jsdelivr.net/gh/dawn-used-yeet-alt/aniyomi-extensions@master/src/all/jellyfin/res/mipmap-xhdpi/ic_launcher.png"
         },
         "extensionLib": "17",
-        "versionCode": "17006",
-        "versionName": "17.6",
+        "versionCode": "17007",
+        "versionName": "17.7",
         "contentWarning": "CONTENT_WARNING_SAFE",
         "sources": [
           {
