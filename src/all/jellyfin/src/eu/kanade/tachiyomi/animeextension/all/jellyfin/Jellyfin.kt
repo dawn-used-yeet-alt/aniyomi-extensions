@@ -471,9 +471,10 @@ class Jellyfin(private val suffix: String) :
 
         val data = client.get(url).parseAs<ItemDto>()
         val infoData = if (preferences.seriesData && data.seriesId != null) {
-            val httpUrl = anime.url.toHttpUrl()
-            val seriesUrl = httpUrl.newBuilder().apply {
-                removePathSegment(httpUrl.pathSize - 1)
+            val seriesUrl = baseUrl.toHttpUrl().newBuilder().apply {
+                addPathSegment("Users")
+                addPathSegment(anime.memo.userId)
+                addPathSegment("Items")
                 addPathSegment(data.seriesId)
             }.build()
 
