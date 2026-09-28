@@ -550,9 +550,14 @@ class Jellyfin(private val suffix: String) :
 
             listOf(client.get(url).parseAs<ItemDto>())
         } else {
-            // Seasons store their parent id in memo; Series entries (and older
-            // library entries) have no seriesId, so fall back to their own id.
-            val seriesId = anime.memo.seriesId ?: anime.url
+            // The parent series id is cached in memo for current entries.
+            // Entries stored before that resolve it from the season item
+            // itself; anything else is a programmer error, fail loudly.
+            val seriesId = when (anime.memo.type) {
+                ItemType.Season -> anime.memo.seriesId ?: seasonSeriesId(anime)
+                ItemType.Series -> anime.url
+                else -> throw IllegalStateException("Cannot list episodes for type ${anime.memo.type}")
+            }
             val episodesUrl = baseUrl.toHttpUrl().newBuilder().apply {
                 addPathSegment("Shows")
                 addPathSegment(seriesId)
@@ -575,6 +580,18 @@ class Jellyfin(private val suffix: String) :
                 episodeTemplate = preferences.episodeTemplate,
             )
         }.reversed()
+    }
+
+    private suspend fun seasonSeriesId(anime: SAnime): String {
+        val url = baseUrl.toHttpUrl().newBuilder().apply {
+            addPathSegment("Users")
+            addPathSegment(anime.memo.userId)
+            addPathSegment("Items")
+            addPathSegment(anime.url)
+        }.build()
+
+        return client.get(url).parseAs<ItemDto>().seriesId
+            ?: throw IllegalStateException("Season ${anime.url} has no parent series on the server")
     }
 
     // ============================ Video Links =============================
