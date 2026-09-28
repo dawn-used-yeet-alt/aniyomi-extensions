@@ -67,8 +67,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Dns
 import okhttp3.Headers
@@ -471,20 +471,33 @@ class Jellyfin(private val suffix: String) :
         }.build()
 
         val data = client.get(url).parseAs<ItemDto>()
-        val infoData = if (preferences.seriesData && data.seriesId != null) {
-            val seriesUrl = baseUrl.toHttpUrl().newBuilder().apply {
-                addPathSegment("Users")
-                addPathSegment(anime.memo.userId)
-                addPathSegment("Items")
-                addPathSegment(data.seriesId)
-            }.build()
-
-            client.get(seriesUrl).parseAs<ItemDto>()
-        } else {
-            data
+        val seriesFields = preferences.seriesDetails
+        if (seriesFields.isEmpty() || data.seriesId == null) {
+            return data.toSAnime(baseUrl, preferences.userId, preferences.concatNames)
         }
 
-        return infoData.toSAnime(baseUrl, preferences.userId, preferences.concatNames)
+        val seriesUrl = baseUrl.toHttpUrl().newBuilder().apply {
+            addPathSegment("Users")
+            addPathSegment(anime.memo.userId)
+            addPathSegment("Items")
+            addPathSegment(data.seriesId)
+        }.build()
+
+        val series = client.get(seriesUrl).parseAs<ItemDto>()
+        val seasonAnime = data.toSAnime(baseUrl, preferences.userId, preferences.concatNames)
+        val seriesAnime = series.toSAnime(baseUrl, preferences.userId, preferences.concatNames)
+
+        return seasonAnime.apply {
+            if ("Title" in seriesFields) title = seriesAnime.title
+            if ("Cover" in seriesFields) {
+                thumbnail_url = seriesAnime.thumbnail_url
+                background_url = seriesAnime.background_url
+            }
+            if ("Description" in seriesFields) description = seriesAnime.description
+            if ("Author" in seriesFields) author = seriesAnime.author
+            if ("Status" in seriesFields) status = seriesAnime.status
+            if ("Genres" in seriesFields) genre = seriesAnime.genre
+        }
     }
 
     private suspend fun seasonList(anime: SAnime): List<SAnime> {
@@ -977,7 +990,7 @@ class Jellyfin(private val suffix: String) :
     val JsonObject.type
         get() = getType("type")
     val JsonObject.seriesId: String?
-        get() = get("seriesId")?.jsonPrimitive?.contentOrNull
+        get() = (get("seriesId") as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     private fun isUnauthenticatedPath(path: String): Boolean {
         val lastTwo = path.trim('/').split('/').takeLast(2).joinToString("/")
@@ -1079,6 +1092,10 @@ class Jellyfin(private val suffix: String) :
         private const val PREF_INFO_TYPE = "preferred_meta_type"
         private const val PREF_INFO_DEFAULT = false
 
+        private const val PREF_SERIES_DETAILS_KEY = "pref_series_details"
+        private val PREF_SERIES_DETAILS = listOf("Title", "Cover", "Description", "Author", "Status", "Genres")
+        private val PREF_SERIES_DETAILS_DEFAULT = emptySet<String>()
+
         private const val PREF_CONCATENATE_NAMES_KEY = "preferred_concatenate_names"
         private const val PREF_CONCATENATE_NAMES_DEFAULT = false
 
@@ -1132,7 +1149,14 @@ class Jellyfin(private val suffix: String) :
     private val SharedPreferences.audioLang by preferences.delegate(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT)
     private val SharedPreferences.subLang by preferences.delegate(PREF_SUB_KEY, PREF_SUB_DEFAULT)
     private val SharedPreferences.burnSub by preferences.delegate(PREF_BURN_SUB_KEY, PREF_BURN_SUB_DEFAULT)
-    private val SharedPreferences.seriesData by preferences.delegate(PREF_INFO_TYPE, PREF_INFO_DEFAULT)
+    private val SharedPreferences.seriesDetails: Set<String>
+        get() {
+            if (!contains(PREF_SERIES_DETAILS_KEY) && getBoolean(PREF_INFO_TYPE, PREF_INFO_DEFAULT)) {
+                return PREF_SERIES_DETAILS.toSet()
+            }
+            return getStringSet(PREF_SERIES_DETAILS_KEY, PREF_SERIES_DETAILS_DEFAULT)
+                ?: PREF_SERIES_DETAILS_DEFAULT
+        }
     private val SharedPreferences.concatNames by preferences.delegate(
         PREF_CONCATENATE_NAMES_KEY,
         PREF_CONCATENATE_NAMES_DEFAULT,
@@ -1206,6 +1230,14 @@ class Jellyfin(private val suffix: String) :
     private var pendingQuickConnectCode: String? = null
     private val loginGeneration = AtomicInteger(0)
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        if (!preferences.contains(PREF_SERIES_DETAILS_KEY) &&
+            preferences.getBoolean(PREF_INFO_TYPE, PREF_INFO_DEFAULT)
+        ) {
+            preferences.edit()
+                .putStringSet(PREF_SERIES_DETAILS_KEY, PREF_SERIES_DETAILS.toSet())
+                .remove(PREF_INFO_TYPE)
+                .apply()
+        }
         val libraryList = json.decodeFromString<List<MediaLibraryDto>>(preferences.libraryList)
         val mediaLibraryPref = screen.getListPreference(
             key = MEDIA_LIBRARY_KEY,
@@ -1572,11 +1604,13 @@ class Jellyfin(private val suffix: String) :
             summary = "Burn in subtitles when transcoding. Does not affect 'Source' quality.",
         )
 
-        screen.addSwitchPreference(
-            key = PREF_INFO_TYPE,
-            default = PREF_INFO_DEFAULT,
+        screen.addSetPreference(
+            key = PREF_SERIES_DETAILS_KEY,
+            default = PREF_SERIES_DETAILS_DEFAULT,
             title = "Retrieve metadata from series",
-            summary = "Enable this to retrieve metadata from series instead of season when applicable.",
+            summary = "Select which metadata to retrieve from the series instead of the season when applicable",
+            entries = PREF_SERIES_DETAILS,
+            entryValues = PREF_SERIES_DETAILS,
         )
 
         screen.addSwitchPreference(
