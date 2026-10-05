@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.reanime
 
 import android.util.Log
-import eu.kanade.tachiyomi.animeextension.en.reanime.FlixProxyServer.Companion.flixCloudUrl
 import keiyoushi.utils.applicationContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
@@ -19,8 +18,11 @@ import java.net.URLDecoder
  * text with no fonts, so libass falls back to system fonts and the highlight
  * sweeps land off-glyph.
  *
- * The embed page carries the font list in `extracted_fonts[]`, served from
- * `/fonts/<fileId>/<name>` (requires `Referer: <flixCloudUrl>/`).
+ * The embed page carries the font list in `extracted_fonts[]` as full URLs on
+ * the file's vault host, e.g.
+ * `https://vault-95.rundowncdn.top/fonts/<fileId>/<name>.ttf` (the vault host
+ * varies per file, so the URLs must be used as-is, never rebuilt on
+ * flixcloud.cc).
  *
  * This runs inside [ReAnime.extractFromServer], i.e. before the user picks a
  * video and therefore before mpv starts. Fonts are written to Animiru's
@@ -40,8 +42,12 @@ object FlixFontCache {
 
     private const val MAX_FONT_BYTES = 25L * 1024 * 1024
 
-    /** /fonts/<fileId>/<name> — fileId is a UUID, name is URL-encoded. */
-    private val FONTS_URL_REGEX = Regex("""/fonts/([0-9a-fA-F-]{36})/([^"'\s)]+)""")
+    /**
+     * Full font URLs on the file's vault host.
+     * Group 1 = whole URL, group 2 = fileId, group 3 = raw (encoded) name.
+     */
+    private val FONTS_URL_REGEX =
+        Regex("""(https://[^"'\s)]+/fonts/([0-9a-fA-F-]{36})/([^"'\s)]+))""")
 
     /** "extracted_fonts": [ ... ] block in the embed HTML/JSON. */
     private val EXTRACTED_FONTS_BLOCK_REGEX = Regex(
@@ -55,8 +61,13 @@ object FlixFontCache {
         RegexOption.IGNORE_CASE,
     )
 
-    /** Fallback fileId source: the subtitle URLs carry the same fileId. */
-    private val SUBTITLE_FILE_ID_REGEX = Regex("""/subtitles/([0-9a-fA-F-]{36})/""")
+    /** Vault host observed in the same payload (fonts or subtitles). */
+    private val VAULT_HOST_REGEX = Regex("""(https://[^"'\s)]+?)/(?:fonts|subtitles)/""")
+
+    /** fileId observed in the same payload (fonts or subtitles). */
+    private val FILE_ID_REGEX = Regex("""/(?:fonts|subtitles)/([0-9a-fA-F-]{36})/""")
+
+    private data class FontCandidate(val url: String, val fileId: String, val name: String)
 
     suspend fun ensureFonts(
         client: OkHttpClient,
@@ -85,12 +96,12 @@ object FlixFontCache {
         }
 
         supervisorScope {
-            candidates.map { (fileId, name) ->
+            candidates.map { candidate ->
                 async {
                     try {
-                        ensureOneFont(client, fontHeaders, cacheRoot, mpvFontsDir, fileId, name)
+                        ensureOneFont(client, fontHeaders, cacheRoot, mpvFontsDir, candidate)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Font failed: $name: $e")
+                        Log.w(TAG, "Font failed: ${candidate.name}: $e")
                     }
                 }
             }.forEach { it.await() }
@@ -101,32 +112,36 @@ object FlixFontCache {
         html: String,
         embedJson: String,
         subtitleUrls: List<String>,
-    ): List<Pair<String, String>> {
-        val found = linkedSetOf<Pair<String, String>>()
+    ): List<FontCandidate> {
+        val sources = listOf(html, embedJson) + subtitleUrls
+        val found = linkedSetOf<FontCandidate>()
 
-        // Full /fonts/<fileId>/<name> URLs carry both pieces.
-        (sequenceOf(html, embedJson)).forEach { source ->
+        // Full vault-host URLs: use as-is, never rebuild the host.
+        sources.forEach { source ->
             FONTS_URL_REGEX.findAll(source).forEach { match ->
-                val fileId = match.groupValues[1]
-                val name = runCatching {
-                    URLDecoder.decode(match.groupValues[2].trim(), "UTF-8")
-                }.getOrNull()?.trim().orEmpty()
-                sanitizeFontName(name)?.let { found.add(fileId to it) }
+                sanitizeFontName(decodeName(match.groupValues[3]))?.let { name ->
+                    found.add(FontCandidate(match.groupValues[1], match.groupValues[2], name))
+                }
             }
         }
 
-        // Bare file names in extracted_fonts[] share the subtitle fileId.
-        val fallbackFileId = found.firstOrNull()?.first
-            ?: sequenceOf(html, embedJson)
-                .flatMap { SUBTITLE_FILE_ID_REGEX.findAll(it) }
-                .plus(subtitleUrls.asSequence().flatMap { SUBTITLE_FILE_ID_REGEX.findAll(it) })
+        // Bare file names in extracted_fonts[]: resolve against the vault host
+        // and fileId observed in the same payload.
+        val vaultHost = sources.asSequence()
+            .flatMap { VAULT_HOST_REGEX.findAll(it) }
+            .firstOrNull()?.groupValues?.get(1)
+        val fallbackFileId = found.firstOrNull()?.fileId
+            ?: sources.asSequence()
+                .flatMap { FILE_ID_REGEX.findAll(it) }
                 .firstOrNull()?.groupValues?.get(1)
-        if (fallbackFileId != null) {
-            sequenceOf(html, embedJson).forEach { source ->
+        if (vaultHost != null && fallbackFileId != null) {
+            listOf(html, embedJson).forEach { source ->
                 EXTRACTED_FONTS_BLOCK_REGEX.findAll(source).forEach { block ->
                     FONT_NAME_REGEX.findAll(block.groupValues[1]).forEach { match ->
-                        sanitizeFontName(match.groupValues[1].trim())?.let {
-                            found.add(fallbackFileId to it)
+                        sanitizeFontName(match.groupValues[1].trim())?.let { name ->
+                            val url = "$vaultHost/fonts/$fallbackFileId/" +
+                                java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+                            found.add(FontCandidate(url, fallbackFileId, name))
                         }
                     }
                 }
@@ -135,6 +150,10 @@ object FlixFontCache {
 
         return found.toList()
     }
+
+    private fun decodeName(raw: String): String = runCatching {
+        URLDecoder.decode(raw.trim(), "UTF-8").trim()
+    }.getOrNull().orEmpty()
 
     private fun sanitizeFontName(raw: String): String? {
         // Never allow path traversal: keep only the final segment.
@@ -155,34 +174,35 @@ object FlixFontCache {
         fontHeaders: Headers,
         cacheRoot: File,
         mpvFontsDir: File,
-        fileId: String,
-        name: String,
+        candidate: FontCandidate,
     ) {
-        val cached = File(File(cacheRoot, fileId), name)
+        val cached = File(File(cacheRoot, candidate.fileId), candidate.name)
         if (cached.length() <= 0) {
-            downloadFont(client, fontHeaders, fileId, name, cached)
+            downloadFont(client, fontHeaders, candidate.url, candidate.name, cached)
         }
         if (cached.length() <= 0) return
 
         // The internal dir is wiped on every MainActivity.onResume(), so copy
         // back whenever it is missing or stale. Current episode wins on name
         // clash: its fonts are what mpv is about to need.
-        val internal = File(mpvFontsDir, name)
+        val internal = File(mpvFontsDir, candidate.name)
         if (!internal.isFile || internal.length() != cached.length()) {
             cached.copyTo(internal, overwrite = true)
-            Log.i(TAG, "Installed font: $name")
+            Log.i(TAG, "Installed font: ${candidate.name}")
         }
     }
 
     private fun downloadFont(
         client: OkHttpClient,
         fontHeaders: Headers,
-        fileId: String,
+        url: String,
         name: String,
         target: File,
     ) {
-        val url = flixCloudUrl.trimEnd('/') + "/fonts/" + fileId + "/" +
-            java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+        if (!url.startsWith("https://")) {
+            Log.w(TAG, "Refusing non-https font URL for $name")
+            return
+        }
         val request = Request.Builder().url(url).headers(fontHeaders).build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
