@@ -852,6 +852,18 @@ class ReAnime :
 
             val skipTimes = embedDataDto.toSkipTimes()
 
+            // HLS serves the same .ass files as the MKV but without its embedded
+            // font attachments, so libass falls back to system fonts and the
+            // \pos()-anchored karaoke lands off-glyph. Pre-seed Animiru's
+            // internal mpv/fonts dir from the embed page's extracted_fonts[]
+            // now, while mpv hasn't started yet. Best-effort: playback must
+            // continue with system-font fallback if this fails.
+            try {
+                FlixFontCache.ensureFonts(client, flixHeaders, html, rawJson, subtitleTracks.map { it.url })
+            } catch (_: Exception) {
+                // Ignore: video must still play without the custom fonts.
+            }
+
             // Strip subtitles/chapters from the payload (enc-dec.app doesn't need them)
             val embedData = try {
                 val obj = rawJson.parseAs<JsonObject>().toMutableMap()
